@@ -58,6 +58,15 @@ Run from the project root on Windows:
 python kabu_station\kabu_proxy.py --host 0.0.0.0 --port 18180 --allow 127.0.0.1,::1,10.215.1.136
 ```
 
+Or use the helper scripts:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File kabu_station\kabu_proxy_start.ps1
+powershell -ExecutionPolicy Bypass -File kabu_station\kabu_proxy_stop.ps1
+powershell -ExecutionPolicy Bypass -File kabu_station\kabu_proxy_restart.ps1
+powershell -ExecutionPolicy Bypass -File kabu_station\kabu_git_pull.ps1
+```
+
 For local-only testing:
 
 ```powershell
