@@ -130,12 +130,14 @@ def score_board(board, median_trading_value=None, tick_up_ratio=None):
     trading_value = _num(board.get("TradingValue"))
     market_buy = _num(board.get("MarketOrderBuyQty"))
     market_sell = _num(board.get("MarketOrderSellQty"))
-    buy_book = _book_qty(board, "Buy") + _num(board.get("UnderBuyQty"))
-    sell_book = _book_qty(board, "Sell") + _num(board.get("OverSellQty"))
+    buy_book = _book_qty(board, "Buy")
+    sell_book = _book_qty(board, "Sell")
 
     vwap_dev = current / vwap - 1.0 if current > 0 and vwap > 0 else 0.0
     market_pressure_raw = market_buy - market_sell
     market_pressure = _bounded(market_pressure_raw, market_buy + market_sell)
+    # 成行は約定フローではなく、板に残る成行注文の参考値として保持する。
+    market_order_component = _bounded((market_sell - market_buy) * 0.5, market_buy + market_sell)
     book_pressure_raw = buy_book - sell_book
     book_pressure = _bounded(book_pressure_raw, buy_book + sell_book)
 
@@ -148,18 +150,26 @@ def score_board(board, median_trading_value=None, tick_up_ratio=None):
     if tick_up_ratio is not None:
         tick_component = max(-1.0, min(1.0, (float(tick_up_ratio) - 0.5) * 2.0))
 
-    score = (
-        0.30 * _bounded(vwap_dev, 0.03)
-        + 0.25 * market_pressure
-        + 0.20 * book_pressure
-        + 0.15 * trading_value_surge
-        + 0.10 * tick_component
-    )
+    if current <= 0 or vwap <= 0 or buy_book + sell_book <= 0:
+        vwap_board_component = 0.0
+    elif vwap_dev >= 0 and book_pressure >= 0:
+        vwap_board_component = 0.5
+    elif vwap_dev < 0 and book_pressure >= 0:
+        vwap_board_component = 0.1
+    elif vwap_dev >= 0 and book_pressure < 0:
+        vwap_board_component = -0.1
+    else:
+        vwap_board_component = -0.5
+
+    score = vwap_board_component
 
     return {
         "vwap_dev": vwap_dev,
+        "vwap_board_component": vwap_board_component,
         "market_order_pressure": market_pressure,
         "market_order_pressure_raw": market_pressure_raw,
+        "market_order_component": market_order_component,
+        "market_order_qty": market_buy + market_sell,
         "book_pressure": book_pressure,
         "book_pressure_raw": book_pressure_raw,
         "buy_book_qty": buy_book,
@@ -178,12 +188,15 @@ CSV_FIELDS = [
     "current_price",
     "vwap",
     "vwap_dev",
+    "vwap_board_component",
     "trading_volume",
     "trading_value",
     "market_order_buy_qty",
     "market_order_sell_qty",
+    "market_order_qty",
     "market_order_pressure",
     "market_order_pressure_raw",
+    "market_order_component",
     "buy_book_qty",
     "sell_book_qty",
     "book_pressure",
@@ -204,12 +217,15 @@ def board_to_row(board, metrics=None, logged_at=None):
         "current_price": board.get("CurrentPrice", ""),
         "vwap": board.get("VWAP", ""),
         "vwap_dev": metrics["vwap_dev"],
+        "vwap_board_component": metrics["vwap_board_component"],
         "trading_volume": board.get("TradingVolume", ""),
         "trading_value": board.get("TradingValue", ""),
         "market_order_buy_qty": board.get("MarketOrderBuyQty", ""),
         "market_order_sell_qty": board.get("MarketOrderSellQty", ""),
+        "market_order_qty": metrics["market_order_qty"],
         "market_order_pressure": metrics["market_order_pressure"],
         "market_order_pressure_raw": metrics["market_order_pressure_raw"],
+        "market_order_component": metrics["market_order_component"],
         "buy_book_qty": metrics["buy_book_qty"],
         "sell_book_qty": metrics["sell_book_qty"],
         "book_pressure": metrics["book_pressure"],

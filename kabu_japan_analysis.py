@@ -5,10 +5,12 @@ kabu Station API based Japan market analysis prototype.
 Existing Japan analysis depends on moomoo watchlists and capital-flow fields.
 This prototype uses kabu Station only:
 
-  1. Get a temporary universe from kabu Station ranking, optionally keep only
-     ETFs/ETNs, and sort it by the Turnover field as a trading-value proxy.
-  2. Fetch /board for each symbol.
-  3. Rank by board-derived pressure score.
+  1. Get two temporary ETF universes from kabu Station ranking:
+     Type=4 (売買代金) as the moomoo standard-like view, and
+     Type=7 (売買代金急増) as the improved view.
+  2. Fetch /board only for holdings and top-ranked candidates.
+  3. Keep each table sorted by its ranking metric; board score is displayed
+     only as a pressure reference.
 
 Usage:
   python3 kabu_japan_analysis.py --base-url http://10.215.1.57:18180 --no-token-required
@@ -16,6 +18,7 @@ Usage:
 """
 import argparse
 import os
+import shutil
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -32,23 +35,25 @@ from kabu_station.kabu_client import (  # noqa: E402
     board_to_row,
     score_board,
 )
-from kabu_station.kabu_check import (  # noqa: E402
-    DEFAULT_PASSWORD_FILE,
-    DEFAULT_PASSWORD_SUFFIX,
-    read_secret,
-)
 
 
 TOP_N_DEFAULT = 20
 UNIVERSE_SIZE_DEFAULT = 100
+BOARD_LIMIT_DEFAULT = 12
 NUM_WORKERS_DEFAULT = 1
 CALL_INTERVAL_DEFAULT = 1.1
 RETRY_WAIT_SECONDS = 3.0
+DEFAULT_LOG_DIR = os.path.join(HERE, "logs")
+DEFAULT_PASSWORD_FILE = os.path.join(HERE, "kabu_station", "config", "kabu_password.txt")
+DEFAULT_PASSWORD_SUFFIX = "prod"
+GDRIVE_LOG_DIR = (
+    "/Users/masaru/Library/CloudStorage/GoogleDrive-sbrmsj@gmail.com/"
+    "マイドライブ/AssetManagement/日本logs_kabu"
+)
 
-# kabu Station ranking Type is kept configurable because this script is a
-# prototype and the official enum can differ by installed API version.
+RANKING_TYPE_TURNOVER = 4
+RANKING_TYPE_TURNOVER_SURGE = 7
 RANKING_TYPE_TICK_COUNT = 5
-ETF_RANKING_TYPES = [5, 1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13]
 
 # Fallback used only when ranking is unavailable. These are liquid JP names
 # commonly useful for smoke-testing board based logic.
@@ -74,11 +79,45 @@ FALLBACK_ETF_SYMBOLS = [
 ]
 
 
+class Tee:
+    def __init__(self, *files):
+        self.files = files
+
+    def write(self, obj):
+        for fp in self.files:
+            fp.write(obj)
+            fp.flush()
+
+    def flush(self):
+        for fp in self.files:
+            fp.flush()
+
+
+def _copy_to_gdrive(log_path):
+    try:
+        os.makedirs(GDRIVE_LOG_DIR, exist_ok=True)
+        dest = os.path.join(GDRIVE_LOG_DIR, os.path.basename(log_path))
+        shutil.copy2(log_path, dest)
+        print(f"  [GDrive] コピー完了: {dest}")
+        return dest
+    except Exception as e:
+        print(f"  [GDrive] コピー失敗: {e}")
+        return None
+
+
 def _num(value):
     try:
         return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def read_secret(path):
+    try:
+        with open(path, encoding="utf-8") as fp:
+            return fp.read().strip()
+    except FileNotFoundError:
+        return None
 
 
 def _code_from_ranking_row(row):
@@ -130,71 +169,159 @@ def _is_etf_row(row):
     )
 
 
-def fetch_ranked_symbols(client, universe_size, ranking_type, exchange_division, etf_only=False):
-    ranking_types = ETF_RANKING_TYPES if etf_only else [ranking_type]
-    rows = []
-    seen_codes = set()
-    for rt in ranking_types:
-        try:
-            body = client.ranking(rt, exchange_division)
-        except Exception:
-            continue
-        for row in _ranking_rows(body):
-            if etf_only and not _is_etf_row(row):
-                continue
-            code = _code_from_ranking_row(row)
-            if not code or code in seen_codes:
-                continue
-            seen_codes.add(code)
-            rows.append(row)
-    rows.sort(key=lambda row: _num(row.get("Turnover") if isinstance(row, dict) else 0), reverse=True)
-    symbols = []
+def _merge_ranking_row(base, row, ranking_type):
+    merged = dict(base or {})
+    if not merged or ranking_type == RANKING_TYPE_TURNOVER:
+        for key in (
+            "No", "Trend", "AverageRanking", "Symbol", "SymbolName", "CurrentPrice",
+            "ChangeRatio", "ChangePercentage", "CurrentPriceTime", "TradingVolume",
+            "Turnover", "ExchangeName", "CategoryName",
+        ):
+            if row.get(key) not in (None, ""):
+                merged[key] = row.get(key)
+    else:
+        for key in ("Symbol", "SymbolName", "CurrentPrice", "ExchangeName", "CategoryName"):
+            if key not in merged and row.get(key) not in (None, ""):
+                merged[key] = row.get(key)
+        if _num(row.get("Turnover")) > _num(merged.get("Turnover")):
+            merged["Turnover"] = row.get("Turnover")
+
+    types = set(merged.get("_RankingTypes", []))
+    types.add(int(ranking_type))
+    merged["_RankingTypes"] = sorted(types)
+    if ranking_type == RANKING_TYPE_TURNOVER:
+        merged["_TurnoverRank"] = row.get("No")
+    elif ranking_type == RANKING_TYPE_TURNOVER_SURGE:
+        merged["RapidPaymentPercentage"] = row.get("RapidPaymentPercentage")
+        merged["_TurnoverSurgeRank"] = row.get("No")
+    elif ranking_type == RANKING_TYPE_TICK_COUNT:
+        merged["TickCount"] = row.get("TickCount")
+        merged["UpCount"] = row.get("UpCount")
+        merged["DownCount"] = row.get("DownCount")
+        merged["_TickRank"] = row.get("No")
+    return merged
+
+
+def _ranking_sort_value(row, sort_by):
+    if sort_by == "rapid_payment_pct":
+        return _num(row.get("RapidPaymentPercentage"))
+    return _num(row.get("Turnover"))
+
+
+def fetch_ranked_symbols(client, universe_size, ranking_type, exchange_division, etf_only=False, sort_by="turnover"):
     ranking_by_symbol = {}
+
+    try:
+        body = client.ranking(ranking_type, exchange_division)
+    except Exception:
+        body = {}
+    for row in _ranking_rows(body):
+        if etf_only and not _is_etf_row(row):
+            continue
+        code = _code_from_ranking_row(row)
+        if not code:
+            continue
+        ranking_by_symbol[code] = _merge_ranking_row(None, row, ranking_type)
+
+    rows = list(ranking_by_symbol.values())
+    rows.sort(key=lambda row: _ranking_sort_value(row, sort_by), reverse=True)
+    symbols = []
     for row in rows:
         code = _code_from_ranking_row(row)
-        if code and code not in symbols:
+        if code and code not in symbols and _ranking_sort_value(row, sort_by) > 0:
             symbols.append(code)
-            ranking_by_symbol[code] = row
         if len(symbols) >= universe_size:
             break
     if etf_only and len(symbols) < universe_size:
         for code in FALLBACK_ETF_SYMBOLS:
             if code not in symbols:
                 symbols.append(code)
+                ranking_by_symbol.setdefault(code, {"Symbol": code, "SymbolName": "", "_RankingTypes": []})
             if len(symbols) >= universe_size:
                 break
-    return symbols, ranking_by_symbol, ranking_types
+    return symbols, ranking_by_symbol
 
 
-def ranking_to_candidate(symbol, row, error):
+def _merge_ranking_maps(*maps):
+    merged = {}
+    for mapping in maps:
+        for symbol, row in mapping.items():
+            if symbol not in merged:
+                merged[symbol] = dict(row)
+                continue
+            current = dict(merged[symbol])
+            for key, value in row.items():
+                if key == "_RankingTypes":
+                    current[key] = sorted(set(current.get(key, [])) | set(value or []))
+                elif value not in (None, ""):
+                    current[key] = value
+            merged[symbol] = current
+    return merged
+
+
+def attach_ranking(row, ranking_row):
+    ranking_row = ranking_row or {}
+    out = dict(row)
+    base_score = _num(out.get("base_score", out.get("score", 0.0)))
+    ranked_turnover = _num(ranking_row.get("Turnover"))
+    rapid_payment_pct = _num(ranking_row.get("RapidPaymentPercentage"))
+    if ranked_turnover and ranked_turnover < 10_000_000:
+        ranked_turnover *= 1_000_000
+    if ranked_turnover and not out.get("turnover"):
+        out["turnover"] = ranked_turnover
+    out["ranking_turnover"] = ranked_turnover
+    out["base_score"] = base_score
+    if rapid_payment_pct > 0:
+        out["score"] = base_score * (rapid_payment_pct / 100.0)
+        out["week_big"] = out["score"]
+        out["big_med5"] = out["score"]
+    out.update({
+        "change_pct": _num(ranking_row.get("ChangePercentage")),
+        "rapid_payment_pct": rapid_payment_pct,
+        "tick_count": _num(ranking_row.get("TickCount")),
+        "turnover_rank": ranking_row.get("_TurnoverRank"),
+        "turnover_surge_rank": ranking_row.get("_TurnoverSurgeRank"),
+    })
+    if not out.get("name") and ranking_row.get("SymbolName"):
+        out["name"] = ranking_row.get("SymbolName")
+    if not out.get("price") and ranking_row.get("CurrentPrice"):
+        out["price"] = _num(ranking_row.get("CurrentPrice"))
+    return out
+
+
+def ranking_to_candidate(symbol, row, source_note="ranking"):
     row = row or {}
     turnover = _num(row.get("Turnover"))
     if turnover and turnover < 10_000_000:
         turnover *= 1_000_000
-    up_count = _num(row.get("UpCount"))
-    down_count = _num(row.get("DownCount"))
-    if up_count + down_count > 0:
-        tick_ratio = up_count / (up_count + down_count)
-        score = max(-1.0, min(1.0, (tick_ratio - 0.5) * 2.0))
-    else:
-        score = 0.0
     return {
         "code": symbol,
         "name": row.get("SymbolName", ""),
         "price": _num(row.get("CurrentPrice")),
         "vwap": 0.0,
         "turnover": turnover,
-        "score": score,
+        "ranking_turnover": turnover,
+        "score": 0.0,
+        "base_score": 0.0,
         "vwap_dev": 0.0,
+        "vwap_board_component": 0.0,
         "market_pressure": 0.0,
+        "market_order_qty": 0.0,
+        "market_order_buy_qty": 0.0,
+        "market_order_sell_qty": 0.0,
         "book_pressure": 0.0,
         "buy_book_qty": 0.0,
         "sell_book_qty": 0.0,
         "super_net": 0.0,
         "big_net": 0.0,
-        "week_big": score,
-        "big_med5": score,
-        "source": f"ranking fallback: {error}",
+        "week_big": 0.0,
+        "big_med5": 0.0,
+        "change_pct": _num(row.get("ChangePercentage")),
+        "rapid_payment_pct": _num(row.get("RapidPaymentPercentage")),
+        "tick_count": _num(row.get("TickCount")),
+        "turnover_rank": row.get("_TurnoverRank"),
+        "turnover_surge_rank": row.get("_TurnoverSurgeRank"),
+        "source": source_note,
     }
 
 
@@ -220,8 +347,14 @@ def fetch_board_candidate(client, symbol, exchange=1, retries=2):
         "vwap": _num(row["vwap"]),
         "turnover": _num(row["trading_value"]),
         "score": row["kabu_pressure_score"],
+        "base_score": row["kabu_pressure_score"],
         "vwap_dev": row["vwap_dev"],
-        "market_pressure": row["market_order_pressure"],
+        "vwap_board_component": row["vwap_board_component"],
+        "market_pressure": row.get("market_order_component", row["market_order_pressure"]),
+        "market_order_pressure": row["market_order_pressure"],
+        "market_order_qty": _num(row["market_order_qty"]),
+        "market_order_buy_qty": _num(row["market_order_buy_qty"]),
+        "market_order_sell_qty": _num(row["market_order_sell_qty"]),
         "book_pressure": row["book_pressure"],
         "buy_book_qty": row["buy_book_qty"],
         "sell_book_qty": row["sell_book_qty"],
@@ -261,8 +394,13 @@ def position_to_candidate(symbol, pos, error):
         "vwap": 0.0,
         "turnover": pos.get("valuation", 0.0),
         "score": 0.0,
+        "base_score": 0.0,
         "vwap_dev": 0.0,
+        "vwap_board_component": 0.0,
         "market_pressure": 0.0,
+        "market_order_qty": 0.0,
+        "market_order_buy_qty": 0.0,
+        "market_order_sell_qty": 0.0,
         "book_pressure": 0.0,
         "buy_book_qty": 0.0,
         "sell_book_qty": 0.0,
@@ -286,26 +424,32 @@ def attach_position(row, pos):
     return row
 
 
-def _print_candidates(candidates, top_n, source, total):
+def _print_candidates(candidates, top_n, source, total, title="kabu board 代替分析"):
     display = candidates if top_n is None else candidates[:top_n]
     suffix = "全件" if top_n is None else f"TOP{top_n}"
-    print(f"\n  【kabu board 代替分析】{suffix}  ({len(candidates)}銘柄取得 / 候補{total}銘柄)")
+    print(f"\n  【{title}】{suffix}  ({len(candidates)}銘柄取得 / 候補{total}銘柄)")
     print(f"  universe: {source}")
     if not display:
         print("    表示できる銘柄なし")
         return
     hdr = (
-        f"    {'Code':<8} {'Name':<18} {'Score':>8} {'VWAP乖離':>10}"
-        f" {'成行圧力':>10} {'板圧力':>10} {'売買代金':>16} {'Price':>10}"
+        f"    {'Code':<8} {'Name':<18} {'Score':>8} {'基礎':>8}"
+        f" {'VWAP乖離':>10} {'板圧力':>10} {'成行偏':>8} {'成行残':>10}"
+        f" {'売買代金':>16} {'急増率':>9} {'Price':>10}"
     )
     print(hdr)
-    print("    " + "-" * 98)
+    print("    " + "-" * 128)
     for r in display:
         name = (r["name"] or "")[:18]
         print(
             f"    {r['code']:<8} {name:<18} {r['score']:>8.3f}"
-            f" {r['vwap_dev']*100:>9.2f}% {r['market_pressure']:>10.3f}"
-            f" {r['book_pressure']:>10.3f} {r['turnover']:>16,.0f}"
+            f" {r.get('base_score', r.get('score', 0.0)):>8.3f}"
+            f" {r.get('vwap_dev', 0.0) * 100:>9.2f}%"
+            f" {r['book_pressure']:>10.3f}"
+            f" {r['market_pressure']:>8.3f}"
+            f" {r.get('market_order_qty', 0.0):>10,.0f}"
+            f" {r['turnover']:>16,.0f}"
+            f" {r.get('rapid_payment_pct', 0.0):>8.1f}%"
             f" {r['price']:>10,.1f}"
         )
 
@@ -316,16 +460,19 @@ def _print_holdings(candidates, total):
         print("    保有銘柄なし")
         return
     hdr = (
-        f"    {'Code':<8} {'Name':<18} {'Score':>8} {'VWAP乖離':>10}"
-        f" {'板圧力':>10} {'数量':>10} {'評価額':>14} {'損益%':>8} {'損益':>12}"
+        f"    {'Code':<8} {'Name':<18} {'Score':>8}"
+        f" {'VWAP乖離':>10} {'板圧力':>10} {'成行残':>10}"
+        f" {'数量':>10} {'評価額':>14} {'損益%':>8} {'損益':>12}"
     )
     print(hdr)
-    print("    " + "-" * 104)
+    print("    " + "-" * 114)
     for r in candidates:
         name = (r["name"] or "")[:18]
         print(
             f"    {r['code']:<8} {name:<18} {r['score']:>8.3f}"
-            f" {r['vwap_dev']*100:>9.2f}% {r['book_pressure']:>10.3f}"
+            f" {r.get('vwap_dev', 0.0) * 100:>9.2f}%"
+            f" {r['book_pressure']:>10.3f}"
+            f" {r.get('market_order_qty', 0.0):>10,.0f}"
             f" {r.get('qty', 0.0):>10,.0f} {r.get('valuation', 0.0):>14,.0f}"
             f" {r.get('profit_loss_rate', 0.0):>7.2f}% {r.get('profit_loss', 0.0):>12,.0f}"
         )
@@ -333,11 +480,11 @@ def _print_holdings(candidates, total):
 
 def _sell_reason(row):
     if row.get("score", 0.0) <= -0.10:
-        return "板/VWAP弱"
-    if row.get("vwap_dev", 0.0) < 0 and row.get("book_pressure", 0.0) < 0:
-        return "VWAP下・板弱"
+        return "需給弱"
+    if row.get("book_pressure", 0.0) < -0.25:
+        return "板弱"
     if row.get("profit_loss_rate", 0.0) < -3.0 and row.get("score", 0.0) < 0:
-        return "含み損・板弱"
+        return "含み損・需給弱"
     return ""
 
 
@@ -347,15 +494,15 @@ def _print_sell_watch(candidates, total):
         print("    売却注意に該当する保有銘柄なし")
         return
     hdr = (
-        f"    {'Code':<8} {'理由':<12} {'Score':>8} {'VWAP乖離':>10}"
+        f"    {'Code':<8} {'理由':<12} {'Score':>8}"
         f" {'板圧力':>10} {'損益%':>8} {'損益':>12}"
     )
     print(hdr)
-    print("    " + "-" * 78)
+    print("    " + "-" * 67)
     for r in candidates:
         print(
             f"    {r['code']:<8} {r['sell_reason']:<12} {r['score']:>8.3f}"
-            f" {r['vwap_dev']*100:>9.2f}% {r['book_pressure']:>10.3f}"
+            f" {r['book_pressure']:>10.3f}"
             f" {r.get('profit_loss_rate', 0.0):>7.2f}% {r.get('profit_loss', 0.0):>12,.0f}"
         )
 
@@ -390,54 +537,85 @@ def main(args):
         except Exception as e:
             print(f"  [0/2] 保有銘柄取得スキップ: {e}")
 
-    source = "ranking"
+    standard_source = "ranking Type=4"
+    surge_source = "ranking Type=7"
     ranking_by_symbol = {}
     try:
-        symbols, ranking_by_symbol, ranking_types = fetch_ranked_symbols(
+        standard_symbols, standard_ranking = fetch_ranked_symbols(
             client,
             args.universe_size,
-            args.ranking_type,
+            RANKING_TYPE_TURNOVER,
             args.exchange_division,
             etf_only=args.etf_only,
+            sort_by="turnover",
         )
-        if not symbols:
+        surge_symbols, surge_ranking = fetch_ranked_symbols(
+            client,
+            args.universe_size,
+            RANKING_TYPE_TURNOVER_SURGE,
+            args.exchange_division,
+            etf_only=args.etf_only,
+            sort_by="rapid_payment_pct",
+        )
+        if not standard_symbols and not surge_symbols:
             raise KabuApiError("ranking returned no symbols")
         filter_label = ", ETF/ETN only" if args.etf_only else ""
-        type_label = ",".join(str(t) for t in ranking_types) if args.etf_only else str(args.ranking_type)
-        source = f"ranking Type={type_label}{filter_label}, sorted by Turnover"
+        standard_source = f"ranking Type=4 売買代金順{filter_label}"
+        surge_source = f"ranking Type=7 売買代金急増候補{filter_label}, sorted by Score"
+        ranking_by_symbol = _merge_ranking_maps(standard_ranking, surge_ranking)
     except Exception as e:
         if args.etf_only:
-            source = f"fallback ETF list (ranking unavailable: {e})"
-            symbols = FALLBACK_ETF_SYMBOLS[: args.universe_size]
+            standard_source = f"fallback ETF list (ranking unavailable: {e})"
+            surge_source = standard_source
+            standard_symbols = FALLBACK_ETF_SYMBOLS[: args.universe_size]
+            surge_symbols = list(standard_symbols)
+            ranking_by_symbol = {s: {"Symbol": s, "SymbolName": "", "_RankingTypes": []} for s in standard_symbols}
         else:
-            source = f"fallback liquid list (ranking unavailable: {e})"
-            symbols = FALLBACK_SYMBOLS[: args.universe_size]
+            standard_source = f"fallback liquid list (ranking unavailable: {e})"
+            surge_source = standard_source
+            standard_symbols = FALLBACK_SYMBOLS[: args.universe_size]
+            surge_symbols = list(standard_symbols)
+            ranking_by_symbol = {s: {"Symbol": s, "SymbolName": "", "_RankingTypes": []} for s in standard_symbols}
 
-    holding_symbols = [s for s in positions if s not in symbols]
-    analysis_symbols = holding_symbols + symbols
+    symbols = list(dict.fromkeys(standard_symbols + surge_symbols))
+    holding_symbols = list(positions)
+    extra_holding_symbols = [s for s in holding_symbols if s not in symbols]
+    board_symbols = list(dict.fromkeys(holding_symbols + symbols[: max(0, args.board_limit)]))
 
-    print(f"  [1/2] universe取得: {len(symbols)}銘柄 ({source})")
-    if holding_symbols:
-        print(f"         保有銘柄を追加分析: {len(holding_symbols)}銘柄")
-    print(f"  [2/2] board取得・スコアリング中... workers={args.workers}", flush=True)
+    print(f"  [1/2] universe取得: 標準{len(standard_symbols)}銘柄 / 改善{len(surge_symbols)}銘柄")
+    print(f"         標準: {standard_source}")
+    print(f"         改善: {surge_source}")
+    if extra_holding_symbols:
+        print(f"         保有銘柄を追加分析: {len(extra_holding_symbols)}銘柄")
+    print(f"  [2/2] board取得・スコアリング中... {len(board_symbols)}銘柄 / workers={args.workers}", flush=True)
 
-    candidates = []
+    candidate_by_symbol = {
+        symbol: ranking_to_candidate(symbol, ranking_by_symbol.get(symbol), "ranking")
+        for symbol in symbols
+    }
     holding_candidates = []
     errors = []
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = {
-            executor.submit(fetch_board_candidate, client, s, args.exchange, args.retries): s
-            for s in analysis_symbols
+            executor.submit(
+                fetch_board_candidate,
+                client,
+                s,
+                args.exchange,
+                args.retries,
+            ): s
+            for s in board_symbols
         }
         for future in as_completed(futures):
             symbol = futures[future]
             try:
                 row = future.result()
                 if row["price"] > 0:
+                    row = attach_ranking(row, ranking_by_symbol.get(symbol))
                     if symbol in positions:
                         holding_candidates.append(attach_position(row, positions[symbol]))
                     if symbol in symbols:
-                        candidates.append(row)
+                        candidate_by_symbol[symbol] = row
             except Exception as e:
                 errors.append((symbol, str(e)))
                 if symbol in positions:
@@ -445,11 +623,15 @@ def main(args):
                         position_to_candidate(symbol, positions[symbol], str(e)),
                         positions[symbol],
                     ))
-                if args.etf_only and symbol in ranking_by_symbol and symbol in symbols:
-                    candidates.append(ranking_to_candidate(symbol, ranking_by_symbol[symbol], str(e)))
             time.sleep(args.interval)
 
-    candidates.sort(key=lambda r: (0 if r.get("source") else 1, r["score"], r["turnover"]), reverse=True)
+    standard_candidates = [candidate_by_symbol[s] for s in standard_symbols if s in candidate_by_symbol]
+    surge_candidates = [candidate_by_symbol[s] for s in surge_symbols if s in candidate_by_symbol]
+    standard_candidates.sort(key=lambda r: r.get("ranking_turnover") or r.get("turnover", 0.0), reverse=True)
+    surge_candidates.sort(
+        key=lambda r: (r.get("score", 0.0), r.get("rapid_payment_pct", 0.0)),
+        reverse=True,
+    )
     holding_candidates.sort(key=lambda r: (r["score"], r.get("profit_loss_rate", 0.0)), reverse=True)
     sell_watch = []
     for row in holding_candidates:
@@ -460,7 +642,10 @@ def main(args):
             sell_watch.append(item)
     sell_watch.sort(key=lambda r: (r["score"], r.get("profit_loss_rate", 0.0)))
     elapsed = (datetime.now() - t0).total_seconds()
-    print(f"         完了: ETF候補{len(candidates)}銘柄 / 保有{len(holding_candidates)}銘柄 / エラー{len(errors)}件")
+    print(
+        f"         完了: ETF標準{len(standard_candidates)}銘柄 / "
+        f"ETF改善{len(surge_candidates)}銘柄 / 保有{len(holding_candidates)}銘柄 / エラー{len(errors)}件"
+    )
     if errors and args.show_errors:
         for symbol, err in errors[:20]:
             print(f"         error {symbol}: {err}")
@@ -469,13 +654,29 @@ def main(args):
         _print_holdings(holding_candidates, total=len(positions))
         _print_sell_watch(sell_watch, total=len(positions))
 
-    _print_candidates(candidates, args.top, source, len(symbols))
+    _print_candidates(
+        standard_candidates,
+        args.top,
+        standard_source,
+        len(standard_symbols),
+        title="売買代金順",
+    )
+    _print_candidates(
+        surge_candidates,
+        args.top,
+        surge_source,
+        len(surge_symbols),
+        title="改善版（Score順）",
+    )
 
     if not args.no_signals:
         try:
             from signals_log import append_signals
 
-            groups = {"kabu_board": candidates}
+            groups = {
+                "売買代金順": standard_candidates,
+                "改善版(Score順)": surge_candidates,
+            }
             if holding_candidates:
                 groups["保有銘柄"] = holding_candidates
             path = append_signals("jp", t0, groups, variant="kabu_board")
@@ -498,17 +699,40 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--universe-size", type=int, default=UNIVERSE_SIZE_DEFAULT)
     parser.add_argument("--top", type=int, default=TOP_N_DEFAULT, help="表示件数。0なら全件")
+    parser.add_argument("--board-limit", type=int, default=BOARD_LIMIT_DEFAULT,
+                        help="ランキング候補のうちboard取得する上位件数")
     parser.add_argument("--workers", type=int, default=NUM_WORKERS_DEFAULT)
     parser.add_argument("--interval", type=float, default=CALL_INTERVAL_DEFAULT)
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument("--exchange", type=int, default=1)
-    parser.add_argument("--ranking-type", type=int, default=RANKING_TYPE_TICK_COUNT)
+    parser.add_argument("--ranking-type", type=int, default=RANKING_TYPE_TURNOVER)
     parser.add_argument("--exchange-division", default="ALL")
     parser.add_argument("--etf-only", action="store_true", help="ランキング候補をETF/ETNだけに絞る")
     parser.add_argument("--include-holdings", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--no-signals", action="store_true")
     parser.add_argument("--show-errors", action="store_true")
+    parser.add_argument("--log-dir", default=DEFAULT_LOG_DIR)
+    parser.add_argument("--no-log", action="store_true")
+    parser.add_argument("--no-gdrive-copy", action="store_true")
     ns = parser.parse_args()
     if ns.top == 0:
         ns.top = None
-    main(ns)
+
+    log_file = None
+    log_path = None
+    if not ns.no_log:
+        os.makedirs(ns.log_dir, exist_ok=True)
+        log_path = os.path.join(ns.log_dir, f"kabu_japan_{datetime.now().strftime('%Y%m%d_%H%M')}.log")
+        log_file = open(log_path, "w", encoding="utf-8")
+        sys.stdout = Tee(sys.__stdout__, log_file)
+
+    try:
+        main(ns)
+        if log_file:
+            log_file.flush()
+        if log_path and not ns.no_gdrive_copy:
+            _copy_to_gdrive(log_path)
+    finally:
+        if log_file:
+            sys.stdout = sys.__stdout__
+            log_file.close()
