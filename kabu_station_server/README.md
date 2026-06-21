@@ -9,7 +9,7 @@ local kabu Station API results to the Mac development environment.
 ## Current Status
 
 - Windows kabu Station API is reachable locally at `http://localhost:18080`.
-- API password is stored locally in `kabu_station/config/kabu_password.txt`.
+- API password is stored locally in `kabu_station_server/config/kabu_password.txt`.
 - The production password suffix is `prod`.
 - `kabu_check.py` can acquire a token and fetch `/kabusapi/board/7203@1`.
 - `kabu_positions.py` can fetch Japanese spot positions with `/kabusapi/positions`.
@@ -55,22 +55,22 @@ Only `/kabusapi/...` is proxied to kabu Station.
 Run from the project root on Windows:
 
 ```powershell
-python kabu_station\kabu_proxy.py --host 0.0.0.0 --port 18180 --allow 127.0.0.1,::1,10.215.1.136
+python kabu_station_server\kabu_proxy.py --host 0.0.0.0 --port 18180 --allow 127.0.0.1,::1,10.215.1.136
 ```
 
 Or use the helper scripts:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File kabu_station\kabu_proxy_start.ps1
-powershell -ExecutionPolicy Bypass -File kabu_station\kabu_proxy_stop.ps1
-powershell -ExecutionPolicy Bypass -File kabu_station\kabu_proxy_restart.ps1
-powershell -ExecutionPolicy Bypass -File kabu_station\kabu_git_pull.ps1
+powershell -ExecutionPolicy Bypass -File kabu_station_server\kabu_proxy_start.ps1
+powershell -ExecutionPolicy Bypass -File kabu_station_server\kabu_proxy_stop.ps1
+powershell -ExecutionPolicy Bypass -File kabu_station_server\kabu_proxy_restart.ps1
+powershell -ExecutionPolicy Bypass -File kabu_station_server\kabu_git_pull.ps1
 ```
 
 For local-only testing:
 
 ```powershell
-python kabu_station\kabu_proxy.py --host 127.0.0.1 --port 18180
+python kabu_station_server\kabu_proxy.py --host 127.0.0.1 --port 18180
 ```
 
 The current allowlist includes localhost and the Mac IP. Keep `--allow` set
@@ -102,7 +102,7 @@ injects it.
 Python client usage from the Mac:
 
 ```python
-from kabu_station.kabu_client import KabuClient
+from kabu_client import KabuClient
 
 client = KabuClient(
     base_url="http://10.215.1.57:18180",
@@ -120,19 +120,19 @@ kabu Station access on Windows, keep the default token-required behavior.
 Token and board:
 
 ```powershell
-python kabu_station\kabu_check.py --symbol 7203 --exchange 1
+python kabu_station_server\kabu_check.py --symbol 7203 --exchange 1
 ```
 
 Proxy-backed board check without a local token:
 
 ```bash
-python kabu_station/kabu_check.py --base-url http://10.215.1.57:18180 --no-token-required --symbol 7203 --exchange 1
+python kabu_station_server/kabu_check.py --base-url http://10.215.1.57:18180 --no-token-required --symbol 7203 --exchange 1
 ```
 
 Positions:
 
 ```powershell
-python kabu_station\kabu_positions.py --product 1 --addinfo
+python kabu_station_server\kabu_positions.py --product 1 --addinfo
 ```
 
 Proxy health:
@@ -158,7 +158,7 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:18180/kabusapi/board/7203@1'
 
 ## Security Notes
 
-- Do not commit `kabu_station/config/kabu_password.txt`.
+- Do not commit `kabu_station_server/config/kabu_password.txt`.
 - Do not expose the proxy outside the trusted LAN.
 - Use `--allow` to restrict clients. At setup time, the Mac client is
   `10.215.1.136`.

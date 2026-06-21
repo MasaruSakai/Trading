@@ -26,9 +26,8 @@ from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(HERE, "kabu_station"))
 
-from kabu_station.kabu_client import (  # noqa: E402
+from kabu_client import (  # noqa: E402
     DEFAULT_BASE_URL,
     KabuApiError,
     KabuClient,
@@ -44,7 +43,7 @@ NUM_WORKERS_DEFAULT = 1
 CALL_INTERVAL_DEFAULT = 1.1
 RETRY_WAIT_SECONDS = 3.0
 DEFAULT_LOG_DIR = os.path.join(HERE, "logs")
-DEFAULT_PASSWORD_FILE = os.path.join(HERE, "kabu_station", "config", "kabu_password.txt")
+DEFAULT_PASSWORD_FILE = os.path.join(HERE, "kabu_station_server", "config", "kabu_password.txt")
 DEFAULT_PASSWORD_SUFFIX = "prod"
 GDRIVE_LOG_DIR = (
     "/Users/masaru/Library/CloudStorage/GoogleDrive-sbrmsj@gmail.com/"

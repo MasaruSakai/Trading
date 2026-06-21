@@ -7,11 +7,16 @@ environment to call the same /kabusapi/... endpoints over LAN.
 import argparse
 import json
 import os
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import error, request
 from urllib.parse import urlsplit
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(HERE)
+sys.path.insert(0, PROJECT_ROOT)
 
 from kabu_client import DEFAULT_BASE_URL, KabuApiError, KabuClient
 from kabu_check import (

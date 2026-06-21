@@ -20,7 +20,7 @@ def run(cmd, check=True):
 
 def ssh_powershell(host, project, script, extra_args=None):
     extra_args = extra_args or []
-    script_path = f"{project}\\kabu_station\\{script}"
+    script_path = f"{project}\\kabu_station_server\\{script}"
     ps_cmd = (
         "Set-Location -LiteralPath " + quote_ps(project) + "; "
         "& " + quote_ps(script_path)

@@ -3,6 +3,11 @@
 import argparse
 import json
 import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(HERE)
+sys.path.insert(0, PROJECT_ROOT)
 
 from kabu_client import (
     DEFAULT_BASE_URL,
@@ -11,10 +16,6 @@ from kabu_client import (
     board_to_row,
     score_board,
 )
-
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(HERE)
 
 DEFAULT_PASSWORD_FILE = os.path.join(HERE, "config", "kabu_password.txt")
 DEFAULT_PASSWORD_SUFFIX = "prod"

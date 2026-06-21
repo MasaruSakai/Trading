@@ -33,7 +33,7 @@ if ($existing) {
 }
 
 $args = @(
-    "kabu_station\kabu_proxy.py",
+    "kabu_station_server\kabu_proxy.py",
     "--host", $HostName,
     "--port", [string]$Port,
     "--allow", $Allow

@@ -2,6 +2,11 @@
 """Fetch and print kabu Station API positions."""
 import argparse
 import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(HERE)
+sys.path.insert(0, PROJECT_ROOT)
 
 from kabu_client import DEFAULT_BASE_URL, KabuClient
 from kabu_check import (
