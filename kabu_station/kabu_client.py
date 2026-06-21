@@ -20,10 +20,11 @@ class KabuApiError(RuntimeError):
 
 
 class KabuClient:
-    def __init__(self, base_url=DEFAULT_BASE_URL, token=None, timeout=10):
+    def __init__(self, base_url=DEFAULT_BASE_URL, token=None, timeout=10, require_token=True):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self.require_token = require_token
 
     def token_from_password(self, password):
         body = self._request(
@@ -67,9 +68,10 @@ class KabuClient:
         data = None
         headers = {"Content-Type": "application/json"}
         if auth:
-            if not self.token:
+            if self.token:
+                headers["X-API-KEY"] = self.token
+            elif self.require_token:
                 raise KabuApiError("API token is required")
-            headers["X-API-KEY"] = self.token
         if payload is not None:
             data = json.dumps(payload).encode("utf-8")
         req = request.Request(

@@ -80,6 +80,22 @@ curl "http://10.215.1.57:18180/kabusapi/positions?product=1&addinfo=true"
 These calls should not require `X-API-KEY` from the Mac because the proxy
 injects it.
 
+Python client usage from the Mac:
+
+```python
+from kabu_station.kabu_client import KabuClient
+
+client = KabuClient(
+    base_url="http://10.215.1.57:18180",
+    require_token=False,
+)
+board = client.board("7203", 1)
+positions = client.positions(product=1, addinfo=True)
+```
+
+Use `require_token=False` when calling the Windows proxy. For direct local
+kabu Station access on Windows, keep the default token-required behavior.
+
 ## Windows-Side Checks
 
 Token and board:
