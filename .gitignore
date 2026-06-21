@@ -39,9 +39,9 @@ dist/
 config/*.txt
 config/*.json
 !config/README.md
-kabu_station/config/*.txt
-kabu_station/config/*.json
-!kabu_station/config/README.md
+kabu_station_server/config/*.txt
+kabu_station_server/config/*.json
+!kabu_station_server/config/README.md
 
 # Virtual environments
 .venv
