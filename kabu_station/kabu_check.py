@@ -44,6 +44,11 @@ def main():
         help=f"Suffix appended to the API password, default: {DEFAULT_PASSWORD_SUFFIX}",
     )
     ap.add_argument("--token", default=os.getenv("KABU_API_TOKEN"))
+    ap.add_argument(
+        "--no-token-required",
+        action="store_true",
+        help="Send requests without a local token; use this when the proxy injects X-API-KEY.",
+    )
     ap.add_argument("--symbol", default="7203", help="Japanese stock code, e.g. 7203")
     ap.add_argument("--exchange", type=int, default=1, help="1 is TSE")
     ap.add_argument("--out", default=DEFAULT_OUT)
@@ -53,8 +58,14 @@ def main():
     ap.add_argument("--json", action="store_true", help="Print raw board JSON")
     args = ap.parse_args()
 
-    client = KabuClient(base_url=args.base_url, token=args.token)
-    if not client.token:
+    client = KabuClient(
+        base_url=args.base_url,
+        token=args.token,
+        require_token=not args.no_token_required,
+    )
+    if args.no_token_required:
+        print("[ok] token not required by client")
+    elif not client.token:
         password = args.password or read_secret(args.password_file)
         if not password:
             raise SystemExit(

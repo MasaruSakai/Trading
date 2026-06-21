@@ -104,6 +104,12 @@ Token and board:
 python kabu_station\kabu_check.py --symbol 7203 --exchange 1
 ```
 
+Proxy-backed board check without a local token:
+
+```bash
+python kabu_station/kabu_check.py --base-url http://10.215.1.57:18180 --no-token-required --symbol 7203 --exchange 1
+```
+
 Positions:
 
 ```powershell
