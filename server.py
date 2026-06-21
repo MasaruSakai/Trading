@@ -33,6 +33,17 @@ MARKETS = {
         'script': os.path.join(HERE, 'analysis_enhanced.py'),
         'args': ['--market', 'jp'],
     },
+    'jp_kabu': {
+        'label': '日本市場 kabu ETF代替',
+        'script': os.path.join(HERE, 'kabu_japan_analysis.py'),
+        'args': [
+            '--base-url', os.getenv('KABU_BASE_URL', 'http://10.215.1.57:18180'),
+            '--no-token-required',
+            '--etf-only',
+            '--universe-size', '30',
+            '--top', '30',
+        ],
+    },
 }
 
 # ── 実行状態 (単一ジョブ) ────────────────────────────────────────────────────
@@ -103,6 +114,8 @@ PAGE = """<!doctype html>
   button.us:active { background: #388bfd; }
   button.jp { background: #238636; }
   button.jp:active { background: #2ea043; }
+  button.jp-kabu { background: #bf8700; }
+  button.jp-kabu:active { background: #d29922; }
   button:disabled { background: #30363d !important; color: #8b949e; cursor: not-allowed; }
   /* 改善版エリア(実験中) */
   .variants { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -139,6 +152,12 @@ PAGE = """<!doctype html>
     <button class="runbtn jp" data-market="jp">日本市場</button>
   </div>
 </section>
+<section>
+  <div class="sec-label">kabuステーションAPI 代替版</div>
+  <div class="btns">
+    <button class="runbtn jp-kabu" data-market="jp_kabu">日本市場 kabu ETF代替</button>
+  </div>
+</section>
 
 <div class="status">
   <span id="dot" class="dot"></span><span id="msg">待機中</span>
@@ -151,7 +170,7 @@ const runbtns = [...document.querySelectorAll('.runbtn')];
 const dot = document.getElementById('dot');
 const msg = document.getElementById('msg');
 const log = document.getElementById('log');
-const LABEL = { us: '米国市場', jp: '日本市場' };
+const LABEL = { us: '米国市場', jp: '日本市場', jp_kabu: '日本市場 kabu ETF代替' };
 let poll = null;
 
 function setBusy(busy) {

@@ -52,6 +52,13 @@ class KabuClient:
             params["addinfo"] = "true"
         return self._request("GET", f"/kabusapi/positions?{urlencode(params)}")
 
+    def ranking(self, ranking_type, exchange_division="ALL"):
+        params = {
+            "Type": int(ranking_type),
+            "ExchangeDivision": exchange_division,
+        }
+        return self._request("GET", f"/kabusapi/ranking?{urlencode(params)}")
+
     def register(self, symbols):
         payload = {
             "Symbols": [
