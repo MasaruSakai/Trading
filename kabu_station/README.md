@@ -86,6 +86,16 @@ curl http://10.215.1.57:18180/kabusapi/board/7203@1
 curl "http://10.215.1.57:18180/kabusapi/positions?product=1&addinfo=true"
 ```
 
+Mac-side Windows management wrapper:
+
+```bash
+python3 scripts/kabu_windows.py status
+python3 scripts/kabu_windows.py pull
+python3 scripts/kabu_windows.py restart
+python3 scripts/kabu_windows.py health
+python3 scripts/kabu_windows.py board --symbol 7203 --exchange 1
+```
+
 These calls should not require `X-API-KEY` from the Mac because the proxy
 injects it.
 
