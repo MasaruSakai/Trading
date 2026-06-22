@@ -625,7 +625,11 @@ def main(args):
             time.sleep(args.interval)
 
     standard_candidates = [candidate_by_symbol[s] for s in standard_symbols if s in candidate_by_symbol]
-    surge_candidates = [candidate_by_symbol[s] for s in surge_symbols if s in candidate_by_symbol]
+    surge_candidates = [
+        candidate_by_symbol[s]
+        for s in surge_symbols
+        if s in candidate_by_symbol and _num(candidate_by_symbol[s].get("score")) != 0
+    ]
     standard_candidates.sort(key=lambda r: r.get("ranking_turnover") or r.get("turnover", 0.0), reverse=True)
     surge_candidates.sort(
         key=lambda r: (r.get("score", 0.0), r.get("rapid_payment_pct", 0.0)),

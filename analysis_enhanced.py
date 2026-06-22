@@ -254,26 +254,20 @@ def _print_group(label, cands, top_n, total,
         print("    条件を満たす銘柄なし")
         return
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
-    print(f"    {'Code':<10} {bear_header}{score_header:>11} {'平均乖離%':>9} {'時間外%':>9} "
-          f"{'大口中央5d':>14} {'大口Net':>14} {'売買代金':>16} {'小口過熱':>7}")
-    print("    " + "-" * 112)
+    if score_percent:
+        print(f"    {'Code':<10} {bear_header}{score_header:>11} {'小口過熱':>7}")
+    else:
+        print(f"    {'Code':<10} {bear_header}{'小口過熱':>7} {score_header:>11}")
+    print("    " + "-" * 48)
     for r in display:
         hot = '⚠' if r.get('small_dom') else ''
-        vd = r.get('avg_price_dev')
-        vd_s = f"{vd*100:>8.2f}" if vd is not None else f"{'--':>8}"
-        ed = r.get('ext_dev')
-        sess = r.get('ext_sess') or ''
-        if ed is not None:
-            warn = '↓' if ed < 0 else ''   # 時間外で売られている=翌寄りリバース警戒
-            ext_s = f"{ed*100:>+6.2f}{warn}{sess[:2]}"
-        else:
-            ext_s = f"{'--':>9}"
         bear_s = f"{(r.get('bear_etf_code') or '--'):>8} " if show_bear_etf else ''
         score = r.get(score_key, 0.0)
         score_s = f"{score*100:>11.3f}" if score_percent else f"{score:>11,.0f}"
-        print(f"    {r['code']:<10} {bear_s}{score_s} {vd_s} {ext_s:>9} "
-              f"{r.get('big_med5',0):>14,.0f} {r['big_net']:>14,.0f} "
-              f"{r['turnover']:>16,.0f} {hot:>7}")
+        if score_percent:
+            print(f"    {r['code']:<10} {bear_s}{score_s} {hot:>7}")
+        else:
+            print(f"    {r['code']:<10} {bear_s}{hot:>7} {score_s}")
 
 
 def _print_sell_watch(cands, total, show_bear_etf=True):
@@ -282,15 +276,12 @@ def _print_sell_watch(cands, total, show_bear_etf=True):
         print("    売却注意に該当する保有銘柄なし")
         return
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
-    print(f"    {'Code':<10} {'理由':>8} {bear_header}{'当日補正Net':>14} "
-          f"{'超大口Net':>14} {'大口Net':>14} {'大口中央5d':>14} {'売買代金':>16}")
-    print("    " + "-" * 112)
+    print(f"    {'Code':<10} {'理由':>8} {bear_header}{'当日補正Net':>14}")
+    print("    " + "-" * 48)
     for r in cands:
         bear_s = f"{(r.get('bear_etf_code') or '--'):>8} " if show_bear_etf else ''
         print(f"    {r['code']:<10} {r['sell_reason']:>8} {bear_s}"
-              f"{r['weighted_net']:>14,.0f} {r['super_net']:>14,.0f} "
-              f"{r['big_net']:>14,.0f} {r.get('big_med5',0):>14,.0f} "
-              f"{r['turnover']:>16,.0f}")
+              f"{r['weighted_net']:>14,.0f}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
