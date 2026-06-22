@@ -7,23 +7,18 @@ environment to call the same /kabusapi/... endpoints over LAN.
 import argparse
 import json
 import os
-import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import error, request
 from urllib.parse import urlsplit
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(HERE)
-sys.path.insert(0, PROJECT_ROOT)
-
-from kabu_client import DEFAULT_BASE_URL, KabuApiError, KabuClient
 from kabu_check import (
     DEFAULT_PASSWORD_FILE,
     DEFAULT_PASSWORD_SUFFIX,
     read_secret,
 )
+from kabu_station_client import DEFAULT_BASE_URL, KabuApiError, KabuStationClient
 
 
 HOP_BY_HOP_HEADERS = {
@@ -56,7 +51,7 @@ class TokenCache:
                 raise KabuApiError(f"Password file not found or empty: {self.password_file}")
             if self.password_suffix:
                 password += self.password_suffix
-            client = KabuClient(base_url=self.base_url, timeout=self.timeout)
+            client = KabuStationClient(base_url=self.base_url, timeout=self.timeout)
             self._token = client.token_from_password(password)
             return self._token
 
