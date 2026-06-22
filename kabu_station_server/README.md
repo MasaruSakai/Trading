@@ -99,21 +99,17 @@ python3 scripts/kabu_windows.py board --symbol 7203 --exchange 1
 These calls should not require `X-API-KEY` from the Mac because the proxy
 injects it.
 
-Python client usage from the Mac:
+Mac-side API contract:
 
-```python
-from kabu_client import KabuClient
-
-client = KabuClient(
-    base_url="http://10.215.1.57:18180",
-    require_token=False,
-)
-board = client.board("7203", 1)
-positions = client.positions(product=1, addinfo=True)
+```text
+GET  /health
+GET  /token/refresh
+ANY  /kabusapi/...  -> forwards to local kabu Station /kabusapi/...
 ```
 
-Use `require_token=False` when calling the Windows proxy. For direct local
-kabu Station access on Windows, keep the default token-required behavior.
+The Mac side should call this proxy over HTTP. It should not import or share
+Python modules from `kabu_station_server`. If `X-API-KEY` is omitted, the
+Windows proxy injects a token from the local Windows password file.
 
 ## Windows-Side Checks
 
@@ -149,7 +145,7 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:18180/kabusapi/board/7203@1'
 
 ## Files
 
-- `kabu_client.py`: Small stdlib client and board scoring helpers.
+- `kabu_station_client.py`: Windows-side stdlib client for local kabu Station checks.
 - `kabu_check.py`: Token + board check, also appends board snapshots to CSV.
 - `kabu_positions.py`: Positions check and console display.
 - `kabu_proxy.py`: Generic `/kabusapi/...` reverse proxy for Mac access.

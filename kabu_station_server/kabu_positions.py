@@ -2,18 +2,15 @@
 """Fetch and print kabu Station API positions."""
 import argparse
 import os
-import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(HERE)
-sys.path.insert(0, PROJECT_ROOT)
 
-from kabu_client import DEFAULT_BASE_URL, KabuClient
 from kabu_check import (
     DEFAULT_PASSWORD_FILE,
     DEFAULT_PASSWORD_SUFFIX,
     read_secret,
 )
+from kabu_station_client import DEFAULT_BASE_URL, KabuStationClient
 
 
 PRODUCT_LABELS = {
@@ -112,7 +109,7 @@ def main():
     ap.add_argument("--addinfo", action="store_true")
     args = ap.parse_args()
 
-    client = KabuClient(base_url=args.base_url, token=args.token)
+    client = KabuStationClient(base_url=args.base_url, token=args.token)
     if not client.token:
         password = args.password or read_secret(args.password_file)
         if not password:

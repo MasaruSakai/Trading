@@ -3,15 +3,13 @@
 import argparse
 import json
 import os
-import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(HERE)
-sys.path.insert(0, PROJECT_ROOT)
 
-from kabu_client import (
+from kabu_station_client import (
     DEFAULT_BASE_URL,
-    KabuClient,
+    KabuStationClient,
     append_csv,
     board_to_row,
     score_board,
@@ -59,7 +57,7 @@ def main():
     ap.add_argument("--json", action="store_true", help="Print raw board JSON")
     args = ap.parse_args()
 
-    client = KabuClient(
+    client = KabuStationClient(
         base_url=args.base_url,
         token=args.token,
         require_token=not args.no_token_required,
