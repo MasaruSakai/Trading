@@ -280,7 +280,7 @@ def _worker(codes_slice):
 
 def _print_group(label, cands, top_n, total,
                  score_key='sort_ingest_ratio', score_header='補正食込%',
-                 score_percent=True, show_bear_etf=True):
+                 score_percent=True, show_bear_etf=True, show_change_pct=False):
     display = cands if top_n is None else cands[:top_n]
     suffix = '全件' if top_n is None else f'TOP{top_n}'
     print(f"\n  【{label}】{suffix}  ({len(cands)}銘柄合格 / {total}銘柄中)")
@@ -288,20 +288,22 @@ def _print_group(label, cands, top_n, total,
         print("    条件を満たす銘柄なし")
         return
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
+    change_header = f" {'前日比%':>9}" if show_change_pct else ''
     if score_percent:
-        print(f"    {'Code':<10} {bear_header}{score_header:>11} {'小口過熱':>7}")
+        print(f"    {'Code':<10} {bear_header}{score_header:>11}{change_header} {'小口過熱':>7}")
     else:
-        print(f"    {'Code':<10} {bear_header}{'小口過熱':>7} {score_header:>11}")
-    print("    " + "-" * 48)
+        print(f"    {'Code':<10} {bear_header}{'小口過熱':>7} {score_header:>11}{change_header}")
+    print("    " + "-" * (58 if show_change_pct else 48))
     for r in display:
         hot = '⚠' if r.get('small_dom') else ''
         bear_s = f"{(r.get('bear_etf_code') or '--'):>8} " if show_bear_etf else ''
         score = r.get(score_key, 0.0)
         score_s = f"{score*100:>11.3f}" if score_percent else f"{score:>11,.0f}"
+        change_s = f" {r.get('today_change_pct', 0.0):>9.3f}" if show_change_pct else ''
         if score_percent:
-            print(f"    {r['code']:<10} {bear_s}{score_s} {hot:>7}")
+            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s} {hot:>7}")
         else:
-            print(f"    {r['code']:<10} {bear_s}{hot:>7} {score_s}")
+            print(f"    {r['code']:<10} {bear_s}{hot:>7} {score_s}{change_s}")
 
 
 def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
@@ -339,11 +341,13 @@ def _print_sell_watch(cands, total, show_bear_etf=True):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main(market, top_n=5, num_workers=4, show_standard_reference=True):
+def main(market, top_n=5, num_workers=4, show_standard_reference=True,
+         holdings_only=False):
     cfg = MARKET_CFG[market]
     t0 = datetime.now()
+    mode_label = '保有のみ' if holdings_only else '通常'
     print(f"\n{'='*78}")
-    print(f"  改善版 資金分析  {cfg['label']}  {t0.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  改善版 資金分析  {cfg['label']}  {mode_label}  {t0.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*78}\n")
 
     # Step 1: 保有 + ウォッチリスト
@@ -373,12 +377,15 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
         groups['保有銘柄'] = data['code'].tolist() if r == RET_OK and not data.empty else []
         print(f"(保有相当: {fav} {len(groups['保有銘柄'])}銘柄) ", end='', flush=True)
         time.sleep(0.2)
-    for g in cfg['watchlists']:
-        r, data = q.get_user_security(g)
-        groups[g] = data['code'].tolist() if r == RET_OK and not data.empty else []
-        time.sleep(0.2)
+    if not holdings_only:
+        for g in cfg['watchlists']:
+            r, data = q.get_user_security(g)
+            groups[g] = data['code'].tolist() if r == RET_OK and not data.empty else []
+            time.sleep(0.2)
 
     all_codes = sorted(set(c for v in groups.values() for c in v))
+    group_order = (['保有銘柄'] if '保有銘柄' in groups else []) + \
+                  ([] if holdings_only else cfg['watchlists'])
 
     # スナップショット: turnover, last_price, avg_price
     # 注: OTC等の不良コードが1つでも混ざるとバッチ全体がエラーになるため、
@@ -540,8 +547,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
           "  (改善版条件 / スコア: 改善版補正食込% - 過熱減点)")
     if market == 'jp':
         etf_only = bool(_ETF_SET)
-        jp_order = (['保有銘柄'] if '保有銘柄' in groups else []) + cfg['watchlists']
-        for g in jp_order:
+        for g in group_order:
             if g == '保有銘柄':
                 c = build_enhanced2(groups[g], etf=True) + build_enhanced2(groups[g], etf=False)
                 c.sort(key=lambda x: x['enhanced2_score'], reverse=True)
@@ -553,7 +559,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
                 total = sum(1 for x in groups[g] if is_etf(x)) if etf_only else len(groups[g])
             _print_group_enhanced2(g, c, top_n=top_n, total=total, show_bear_etf=False)
     else:
-        order = (['保有銘柄'] if '保有銘柄' in groups else []) + cfg['watchlists']
+        order = group_order
         native_codes_e2 = set()
         for g in order:
             if g in ETF_NATIVE_WATCHLISTS:
@@ -570,11 +576,12 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
                     c = build_enhanced2(groups[g], etf=False)
                     _print_group_enhanced2(g, c, top_n=top_n,
                                            total=len([x for x in groups[g] if not is_etf(x)]))
-        etf_pass_e2 = sorted([v for v in pass_map.values()
-                              if v['is_etf'] and v['code'] not in native_codes_e2],
-                             key=lambda x: x['enhanced2_score'], reverse=True)
-        _print_group_enhanced2('ETF(参考・分散用)', etf_pass_e2, top_n=None,
-                               total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes_e2))
+        if not holdings_only:
+            etf_pass_e2 = sorted([v for v in pass_map.values()
+                                  if v['is_etf'] and v['code'] not in native_codes_e2],
+                                 key=lambda x: x['enhanced2_score'], reverse=True)
+            _print_group_enhanced2('ETF(参考・分散用)', etf_pass_e2, top_n=None,
+                                   total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes_e2))
 
     print("\n  【改善版結果】"
           "  (改善版条件 / ソート: 補正食込率)")
@@ -587,8 +594,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
         etf_only = bool(_ETF_SET)
         if etf_only:
             print("  ※ ETFのみ表示(少額のためETFで対応)")
-        jp_order = (['保有銘柄'] if '保有銘柄' in groups else []) + cfg['watchlists']
-        for g in jp_order:
+        for g in group_order:
             if g == '保有銘柄':
                 c = build(groups[g], etf=True) + build(groups[g], etf=False)
                 c.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)
@@ -599,37 +605,42 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
                            key=lambda x: x['sort_ingest_ratio'], reverse=True)
                 total = sum(1 for x in groups[g] if is_etf(x)) if etf_only else len(groups[g])
             group_cands[g] = c
-            _print_group(g, c, top_n=top_n, total=total, show_bear_etf=False)
+            _print_group(g, c, top_n=top_n, total=total, show_bear_etf=False,
+                         show_change_pct=holdings_only)
             if g == '保有銘柄':
                 _print_sell_watch(sell_watch, total=len(groups[g]), show_bear_etf=False)
     else:
-        order = (['保有銘柄'] if '保有銘柄' in groups else []) + cfg['watchlists']
+        order = group_order
         native_codes = set()    # ETF分離せず自グループ表示する銘柄(ETFセクションから除外)
         for g in order:
             if g in ETF_NATIVE_WATCHLISTS:    # 元々ETF構成: 分離せずそのまま表示
                 c = build(groups[g], etf=True) + build(groups[g], etf=False)
                 c.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)
                 native_codes.update(x['code'] for x in c)
-                _print_group(g, c, top_n=top_n, total=len(groups[g]))
+                _print_group(g, c, top_n=top_n, total=len(groups[g]),
+                             show_change_pct=holdings_only)
             else:
                 if g == '保有銘柄':
                     c = build(groups[g], etf=True) + build(groups[g], etf=False)
                     c.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)
-                    _print_group(g, c, top_n=None, total=len(groups[g]))
+                    _print_group(g, c, top_n=None, total=len(groups[g]),
+                                 show_change_pct=holdings_only)
                     _print_sell_watch(sell_watch, total=len(groups[g]))
                 else:
                     c = build(groups[g], etf=False)
                     _print_group(g, c, top_n=top_n,
-                                 total=len([x for x in groups[g] if not is_etf(x)]))
+                                 total=len([x for x in groups[g] if not is_etf(x)]),
+                                 show_change_pct=holdings_only)
             group_cands[g] = c
 
         # ETFは分離して残す(参考・分散用)。元々ETF構成グループの分は重複させない。
-        etf_pass = sorted([v for v in pass_map.values()
-                           if v['is_etf'] and v['code'] not in native_codes],
-                          key=lambda x: x['sort_ingest_ratio'], reverse=True)
-        group_cands['ETF(参考)'] = etf_pass
-        _print_group('ETF(参考・分散用)', etf_pass, top_n=None,
-                     total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes))
+        if not holdings_only:
+            etf_pass = sorted([v for v in pass_map.values()
+                               if v['is_etf'] and v['code'] not in native_codes],
+                              key=lambda x: x['sort_ingest_ratio'], reverse=True)
+            group_cands['ETF(参考)'] = etf_pass
+            _print_group('ETF(参考・分散用)', etf_pass, top_n=None,
+                         total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes))
 
     if show_standard_reference:
         # ── 標準版結果(参考) ─────────────────────────────────────────────────────
@@ -643,8 +654,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
         print(f"\n{'='*78}")
         print(f"  【参考】標準版結果  (フィルタ②: 4/5日プラス / ソート: 超大口5日中央値 + 大口5日中央値*0.5 - 小口5日中央値*0.25)")
         if market == 'jp':
-            jp_order = (['保有銘柄'] if '保有銘柄' in groups else []) + cfg['watchlists']
-            for g in jp_order:
+            for g in group_order:
                 if g == '保有銘柄':
                     c = build_strict(groups[g], etf=True) + build_strict(groups[g], etf=False)
                     c.sort(key=lambda x: x['standard_sort_med5'], reverse=True)
@@ -656,7 +666,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
                     total = len(groups[g])
                 _print_group(g, c, top_n=top_n, total=total,
                              score_key='standard_sort_med5', score_header='標準補正5d',
-                             score_percent=False, show_bear_etf=False)
+                             score_percent=False, show_bear_etf=False,
+                             show_change_pct=holdings_only)
         else:
             native_codes_s = set()
             for g in order:
@@ -665,31 +676,38 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
                     c.sort(key=lambda x: x['standard_sort_med5'], reverse=True)
                     native_codes_s.update(x['code'] for x in c)
                     _print_group(g, c, top_n=top_n, total=len(groups[g]),
-                                 score_key='standard_sort_med5', score_header='標準補正5d', score_percent=False)
+                                 score_key='standard_sort_med5', score_header='標準補正5d',
+                                 score_percent=False, show_change_pct=holdings_only)
                 else:
                     if g == '保有銘柄':
                         c = build_strict(groups[g], etf=True) + build_strict(groups[g], etf=False)
                         c.sort(key=lambda x: x['standard_sort_med5'], reverse=True)
                         _print_group(g, c, top_n=None, total=len(groups[g]),
-                                     score_key='standard_sort_med5', score_header='標準補正5d', score_percent=False)
+                                     score_key='standard_sort_med5', score_header='標準補正5d',
+                                     score_percent=False, show_change_pct=holdings_only)
                     else:
                         c = build_strict(groups[g], etf=False)
                         _print_group(g, c, top_n=top_n, total=len([x for x in groups[g] if not is_etf(x)]),
-                                     score_key='standard_sort_med5', score_header='標準補正5d', score_percent=False)
-            etf_strict = sorted([v for v in strict_pass_map.values()
-                                 if v['is_etf'] and v['code'] not in native_codes_s],
-                                key=lambda x: x['standard_sort_med5'], reverse=True)
-            _print_group('ETF(参考・分散用)', etf_strict, top_n=None,
-                         total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes_s),
-                         score_key='standard_sort_med5', score_header='標準補正5d', score_percent=False)
+                                     score_key='standard_sort_med5', score_header='標準補正5d',
+                                     score_percent=False, show_change_pct=holdings_only)
+            if not holdings_only:
+                etf_strict = sorted([v for v in strict_pass_map.values()
+                                     if v['is_etf'] and v['code'] not in native_codes_s],
+                                    key=lambda x: x['standard_sort_med5'], reverse=True)
+                _print_group('ETF(参考・分散用)', etf_strict, top_n=None,
+                             total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes_s),
+                             score_key='standard_sort_med5', score_header='標準補正5d', score_percent=False)
 
-    # signals.csv 追記(variant='enhanced')
-    try:
-        path = append_signals(market, t0, group_cands, variant='enhanced')
-        if path:
-            print(f"\n  [signals] CSV追記: {sum(len(v) for v in group_cands.values())}行 → {path}")
-    except Exception as e:
-        print(f"  [signals] 追記スキップ: {e}")
+    if holdings_only:
+        print("\n  [signals] 保有のみ分析のためCSV追記をスキップ")
+    else:
+        # signals.csv 追記(variant='enhanced')
+        try:
+            path = append_signals(market, t0, group_cands, variant='enhanced')
+            if path:
+                print(f"\n  [signals] CSV追記: {sum(len(v) for v in group_cands.values())}行 → {path}")
+        except Exception as e:
+            print(f"  [signals] 追記スキップ: {e}")
 
     print(f"\n  合計所要時間: {elapsed:.1f}秒\n")
 
@@ -704,14 +722,17 @@ if __name__ == '__main__':
                     help='米国市場はNY 15:00-15:59の時だけ実行する(定期実行用)')
     ap.add_argument('--hide-standard-reference', action='store_true',
                     help='参考の標準版条件結果を下部に表示しない')
+    ap.add_argument('--holdings-only', action='store_true',
+                    help='保有銘柄のみを分析し、signals.csv には追記しない')
     args = ap.parse_args()
 
     if args.market == 'us' and args.market_window and not _check_us_market_window():
         sys.exit(0)
 
     os.makedirs(args.log_dir, exist_ok=True)
+    mode_suffix = '_holdings' if args.holdings_only else ''
     log_path = os.path.join(args.log_dir,
-                            f"enhanced_{args.market}_{datetime.now().strftime('%Y%m%d_%H%M')}.log")
+                            f"enhanced_{args.market}{mode_suffix}_{datetime.now().strftime('%Y%m%d_%H%M')}.log")
 
     class Tee:
         def __init__(self, *fs): self.files = fs
@@ -724,7 +745,8 @@ if __name__ == '__main__':
     sys.stdout = Tee(sys.__stdout__, lf)
     try:
         main(args.market, top_n=args.top, num_workers=args.workers,
-             show_standard_reference=not args.hide_standard_reference)
+             show_standard_reference=not args.hide_standard_reference,
+             holdings_only=args.holdings_only)
         lf.flush()
         _copy_to_gdrive(log_path, args.market)
     finally:

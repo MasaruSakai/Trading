@@ -33,6 +33,16 @@ MARKETS = {
         'script': os.path.join(HERE, 'analysis_enhanced.py'),
         'args': ['--market', 'jp'],
     },
+    'us_holdings': {
+        'label': '米国保有のみ',
+        'script': os.path.join(HERE, 'analysis_enhanced.py'),
+        'args': ['--market', 'us', '--holdings-only', '--top', '10'],
+    },
+    'jp_holdings': {
+        'label': '日本保有のみ',
+        'script': os.path.join(HERE, 'analysis_enhanced.py'),
+        'args': ['--market', 'jp', '--holdings-only', '--top', '10'],
+    },
     'jp_kabu': {
         'label': '日本市場 kabu ETF代替',
         'script': os.path.join(HERE, 'kabu_japan_analysis.py'),
@@ -114,6 +124,10 @@ PAGE = """<!doctype html>
   button.us:active { background: #388bfd; }
   button.jp { background: #238636; }
   button.jp:active { background: #2ea043; }
+  button.us-holdings { background: #388bfd; }
+  button.us-holdings:active { background: #58a6ff; }
+  button.jp-holdings { background: #2ea043; }
+  button.jp-holdings:active { background: #56d364; }
   button.jp-kabu { background: #bf8700; }
   button.jp-kabu:active { background: #d29922; }
   button:disabled { background: #30363d !important; color: #8b949e; cursor: not-allowed; }
@@ -153,6 +167,13 @@ PAGE = """<!doctype html>
   </div>
 </section>
 <section>
+  <div class="sec-label">保有のみ分析</div>
+  <div class="btns">
+    <button class="runbtn us-holdings" data-market="us_holdings">米国保有のみ</button>
+    <button class="runbtn jp-holdings" data-market="jp_holdings">日本保有のみ</button>
+  </div>
+</section>
+<section>
   <div class="sec-label">kabuステーションAPI 代替版</div>
   <div class="btns">
     <button class="runbtn jp-kabu" data-market="jp_kabu">日本市場 kabu ETF代替</button>
@@ -170,7 +191,13 @@ const runbtns = [...document.querySelectorAll('.runbtn')];
 const dot = document.getElementById('dot');
 const msg = document.getElementById('msg');
 const log = document.getElementById('log');
-const LABEL = { us: '米国市場', jp: '日本市場', jp_kabu: '日本市場 kabu ETF代替' };
+const LABEL = {
+  us: '米国市場',
+  jp: '日本市場',
+  us_holdings: '米国保有のみ',
+  jp_holdings: '日本保有のみ',
+  jp_kabu: '日本市場 kabu ETF代替'
+};
 let poll = null;
 
 function setBusy(busy) {
