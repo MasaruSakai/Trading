@@ -23,6 +23,9 @@
 *   **iPhone 16e 向けのモバイルUI最適化と高さ・下部余白の更なる調整**:
     *   [server.py](file:///Users/masaru/Projects/Trading/server.py) にモバイル専用のメディアクエリを追加。画面高さを固定（Flexbox）し、ボタンや余白をスリム化しつつタップ可能領域を確保し、ログ表示preエリアが画面の残り全縦幅を埋めるように改修（PR #15 -> #16）。
     *   さらに左右・下部のマージンとパディングを極限まで削り、高さを最新の動的ビューポート高 `100dvh` に置き換え、下部セーフエリアの無駄な隙間を `max(8px, env(safe-area-inset-bottom) - 16px)` で削減（PR #19 -> #20, PR #21 -> #22）。
+*   **相談用チャットUIの別ページ仮組み追加**:
+    *   [server.py](file:///Users/masaru/Projects/Trading/server.py) に `/chat` ルートを追加し、Outfitフォントを用いたモバイル最適化チャットUIを実装。キーワード応答ダミーAPI（`/api/chat`）を実装し、メイン画面のヘッダーに `💬 相談チャット` ボタンを設置（PR #25 -> #26）。
+
 
 
 ---
