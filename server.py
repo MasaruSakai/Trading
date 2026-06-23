@@ -888,6 +888,20 @@ class Handler(BaseHTTPRequestHandler):
                     'finished_at': _state['finished_at'],
                 })
             self._send(200, snap, 'application/json; charset=utf-8')
+        elif path == '/api/restart':
+            client_ip = self.client_address[0]
+            if client_ip not in ('127.0.0.1', '::1', 'localhost'):
+                self._send(403, 'Forbidden: localhost only')
+                return
+            
+            def delayed_restart():
+                time.sleep(0.5)
+                import sys
+                import os
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            
+            threading.Thread(target=delayed_restart, daemon=True).start()
+            self._send(200, json.dumps({'ok': True, 'message': 'restarting'}), 'application/json')
         else:
             self._send(404, 'not found')
 
