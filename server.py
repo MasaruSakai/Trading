@@ -896,9 +896,8 @@ class Handler(BaseHTTPRequestHandler):
             
             def delayed_restart():
                 time.sleep(0.5)
-                import sys
                 import os
-                os.execv(sys.executable, [sys.executable] + sys.argv)
+                os._exit(0)
             
             threading.Thread(target=delayed_restart, daemon=True).start()
             self._send(200, json.dumps({'ok': True, 'message': 'restarting'}), 'application/json')
