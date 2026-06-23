@@ -154,14 +154,13 @@ PAGE = """<!doctype html>
         font-family: ui-monospace, "SF Mono", Menlo, monospace; }
   @media (max-width: 480px) {
     html, body {
-      height: 100vh;
-      height: -webkit-fill-available;
+      height: 100dvh;
       overflow: hidden;
     }
     body {
       display: flex;
       flex-direction: column;
-      padding: env(safe-area-inset-top) 6px env(safe-area-inset-bottom, 6px);
+      padding: env(safe-area-inset-top) 6px max(8px, env(safe-area-inset-bottom) - 16px);
     }
     header {
       padding: 8px 0 4px;
