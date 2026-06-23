@@ -287,23 +287,33 @@ def _print_group(label, cands, top_n, total,
     if not display:
         print("    条件を満たす銘柄なし")
         return
+    is_holdings = (label == '保有銘柄')
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     change_header = f" {'前日比%':>9}" if show_change_pct else ''
+    pl_header = f" {'含み益%':>9}" if is_holdings else ''
+
     if score_percent:
-        print(f"    {'Code':<10} {bear_header}{score_header:>11}{change_header} {'小口過熱':>7}")
+        header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header} {'小口過熱':>7}"
     else:
-        print(f"    {'Code':<10} {bear_header}{'小口過熱':>7} {score_header:>11}{change_header}")
-    print("    " + "-" * (58 if show_change_pct else 48))
+        header_str = f"{'Code':<10} {bear_header}{'小口過熱':>7} {score_header:>11}{change_header}{pl_header}"
+    print("    " + header_str)
+    print("    " + "-" * len(header_str))
+
     for r in display:
         hot = '⚠' if r.get('small_dom') else ''
         bear_s = f"{(r.get('bear_etf_code') or '--'):>8} " if show_bear_etf else ''
         score = r.get(score_key, 0.0)
         score_s = f"{score*100:>11.3f}" if score_percent else f"{score:>11,.0f}"
         change_s = f" {r.get('today_change_pct', 0.0):>9.3f}" if show_change_pct else ''
+
+        pl_val = r.get('pl_ratio', 0.0)
+        pl_val_str = f"{pl_val:+.2f}%"
+        pl_s = f" {pl_val_str:>9}" if is_holdings else ''
+
         if score_percent:
-            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s} {hot:>7}")
+            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s} {hot:>7}")
         else:
-            print(f"    {r['code']:<10} {bear_s}{hot:>7} {score_s}{change_s}")
+            print(f"    {r['code']:<10} {bear_s}{hot:>7} {score_s}{change_s}{pl_s}")
 
 
 def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
@@ -313,16 +323,26 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
     if not display:
         print("    条件を満たす銘柄なし")
         return
+    is_holdings = (label == '保有銘柄')
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
-    print(f"    {'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'過熱減点':>9} {'小口過熱':>7}")
-    print("    " + "-" * 66)
+    pl_header = f" {'含み益%':>9}" if is_holdings else ''
+
+    header_str = f"{'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'過熱減点':>9}{pl_header} {'小口過熱':>7}"
+    print("    " + header_str)
+    print("    " + "-" * len(header_str))
+
     for r in display:
         hot = '⚠' if r.get('small_dom') else ''
         bear_s = f"{(r.get('bear_etf_code') or '--'):>8} " if show_bear_etf else ''
+
+        pl_val = r.get('pl_ratio', 0.0)
+        pl_val_str = f"{pl_val:+.2f}%"
+        pl_s = f" {pl_val_str:>9}" if is_holdings else ''
+
         print(f"    {r['code']:<10} {bear_s}"
               f"{r.get('enhanced2_score', 0.0):>11.3f} "
               f"{r.get('today_change_pct', 0.0):>11.3f} "
-              f"{r.get('overheat_penalty', 0.0):>9.3f} {hot:>7}")
+              f"{r.get('overheat_penalty', 0.0):>9.3f}{pl_s} {hot:>7}")
 
 
 def _print_sell_watch(cands, total, show_bear_etf=True):
@@ -352,6 +372,20 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
 
     # Step 1: 保有 + ウォッチリスト
     groups = {}
+    holding_pls = {}
+
+    # Load manual override/JP holdings PL ratios from config/holdings_pl.json
+    json_pls = {}
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'holdings_pl.json')
+    if os.path.exists(config_path):
+        try:
+            import json
+            with open(config_path, 'r', encoding='utf-8') as f:
+                json_pls = json.load(f)
+            json_pls = {str(k): float(v) for k, v in json_pls.items()}
+        except Exception as e:
+            print(f"  [holdings_pl] config/holdings_pl.json 読み込み失敗: {e}")
+
     if cfg.get('holdings'):
         print("  [1/3] 保有銘柄取得中...", end=' ', flush=True)
         h = cfg['holdings']
@@ -359,9 +393,20 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         ret, pos = trd.position_list_query(trd_env=TrdEnv.REAL, acc_id=h['acc_id'],
                                            refresh_cache=True)
         trd.close()
-        hold = [str(r.get('code', '')) for _, r in pos.iterrows()
-                if ret == RET_OK and float(r.get('qty', 0) or 0) > 0] \
-               if ret == RET_OK and not pos.empty else []
+        hold = []
+        if ret == RET_OK and not pos.empty:
+            for _, r in pos.iterrows():
+                qty = float(r.get('qty', 0) or 0)
+                if qty > 0:
+                    code = str(r.get('code', ''))
+                    hold.append(code)
+                    pl_ratio = 0.0
+                    if 'pl_ratio' in r:
+                        try:
+                            pl_ratio = float(r['pl_ratio'] or 0.0)
+                        except (ValueError, TypeError):
+                            pl_ratio = 0.0
+                    holding_pls[code] = pl_ratio
         groups['保有銘柄'] = hold
         print(f"{len(hold)}銘柄")
 
@@ -386,6 +431,13 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     all_codes = sorted(set(c for v in groups.values() for c in v))
     group_order = (['保有銘柄'] if '保有銘柄' in groups else []) + \
                   ([] if holdings_only else cfg['watchlists'])
+
+    # Merge manual overrides and default to 0.0% for any remaining holding codes
+    for code in groups.get('保有銘柄', []):
+        if code in json_pls:
+            holding_pls[code] = json_pls[code]
+        elif code not in holding_pls:
+            holding_pls[code] = 0.0
 
     # スナップショット: turnover, last_price, avg_price
     # 注: OTC等の不良コードが1つでも混ざるとバッチ全体がエラーになるため、
@@ -477,6 +529,18 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         enhanced1_score_pct = ((sort_weighted_net / tov) * 100.0) if tov > 0 else 0.0
         today_change_pct = info.get('today_change_pct', 0.0)
         overheat_penalty = _overheat_penalty(today_change_pct)
+
+        pl_ratio = holding_pls.get(c, 0.0)
+        bonus = 0.0
+        if c in holding_codes:
+            bonus = pl_ratio * 0.2
+
+        sort_ingest_ratio = (sort_weighted_net / tov) if tov > 0 else 0.0
+        enhanced2_score = enhanced1_score_pct - overheat_penalty
+
+        sort_ingest_ratio += bonus / 100.0
+        enhanced2_score += bonus
+
         return {
             'code': c, 'super_net': d['super_net'], 'big_net': big,
             'mid_net': d['mid_net'], 'small_net': d['small_net'],
@@ -484,10 +548,10 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             'avg_price_dev': round(avg_price_dev, 5) if avg_price_dev is not None else None,
             'vwap_dev': round(avg_price_dev, 5) if avg_price_dev is not None else None,
             'ingest_ratio': (weighted_net / tov) if tov > 0 else 0.0,
-            'sort_ingest_ratio': (sort_weighted_net / tov) if tov > 0 else 0.0,
+            'sort_ingest_ratio': sort_ingest_ratio,
             'today_change_pct': today_change_pct,
             'overheat_penalty': overheat_penalty,
-            'enhanced2_score': enhanced1_score_pct - overheat_penalty,
+            'enhanced2_score': enhanced2_score,
             'big_med5': f.get('big_med5', 0.0),
             'big_component_med5': f.get('big_component_med5', 0.0),
             'small_med5': f.get('small_med5', 0.0),
@@ -497,6 +561,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             'bear_etf': 1 if bear_etf_code else 0,
             'bear_etf_code': bear_etf_code,
             'ext_dev': ext_dev, 'ext_sess': ext_sess,
+            'pl_ratio': pl_ratio,
         }
 
     pass_map = {c: make(c, d, f, tov, vd) for c, d, f, tov, vd in passers}
