@@ -787,7 +787,7 @@ def _get_project_context():
 
 
 def _call_gemini_api(api_key, context, message):
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     
     prompt_text = f"System Context:\n{context}\n\nUser Question: {message}"
     
