@@ -453,13 +453,15 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     passers_strict = []   # 標準版フィルタ② (4/5日プラス) を通過した銘柄
     for c, r in results.items():
         d, f = r['dist'], r.get('flow') or {}
-        if not (d['ok'] and f.get('ok')):
-            continue
+        is_holding = c in holding_codes
+        if not is_holding:
+            if not (d['ok'] and f.get('ok')):
+                continue
         info = snap_info.get(c, {})
         last, avg_price, tov = info.get('last', 0), info.get('avg_price', 0), info.get('turnover', 0)
         avg_price_dev = (last / avg_price - 1.0) if avg_price > 0 else None   # 表示のみ
         passers.append((c, d, f, tov, avg_price_dev))
-        if f.get('ok_strict'):
+        if is_holding or f.get('ok_strict'):
             passers_strict.append((c, d, f, tov, avg_price_dev))
     print(f"         改善版通過: {len(passers)}銘柄  /  標準版通過: {len(passers_strict)}銘柄")
 
