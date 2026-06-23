@@ -238,7 +238,6 @@ PAGE = """<!doctype html>
 <header>
   <div style="display: flex; justify-content: space-between; align-items: center;">
     <h1>📈 Capital Flow Analysis</h1>
-    <a href="/chat" class="chat-btn">💬 相談チャット</a>
   </div>
   <div class="sub">食込率 + 連続性 + 時間外確認 + ETF分離</div>
 </header>
