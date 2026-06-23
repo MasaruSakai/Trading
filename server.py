@@ -173,12 +173,14 @@ PAGE = """<!doctype html>
     <button class="runbtn jp-holdings" data-market="jp_holdings">日本保有のみ</button>
   </div>
 </section>
+<!--
 <section>
   <div class="sec-label">kabuステーションAPI 代替版</div>
   <div class="btns">
     <button class="runbtn jp-kabu" data-market="jp_kabu">日本市場 kabu ETF代替</button>
   </div>
 </section>
+-->
 
 <div class="status">
   <span id="dot" class="dot"></span><span id="msg">待機中</span>
