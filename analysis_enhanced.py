@@ -36,7 +36,7 @@
   python3 analysis_enhanced.py --market jp
   python3 analysis_enhanced.py --market us --top 6 --workers 4
 """
-import sys, time, argparse, os, re
+import sys, time, argparse, os, re, math
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -52,6 +52,9 @@ from analysis_common import get_distribution, get_big_median
 OPEND_HOST, OPEND_PORT = '127.0.0.1', 11111
 CALL_INTERVAL = 1.05
 SNAPSHOT_BATCH = 200
+OVERHEAT_THRESHOLD_PCT = 1.0
+OVERHEAT_FACTOR = 2.5
+OVERHEAT_CAP = 15.0
 
 GDRIVE_LOG_DIR = {
     'us': '/Users/masaru/Library/CloudStorage/GoogleDrive-sbrmsj@gmail.com/マイドライブ/AssetManagement/米国logs',
@@ -195,6 +198,37 @@ def ext_confirm(info, market):
     return None, ''
 
 
+def _row_float(row, key):
+    try:
+        return float(row.get(key, 0) or 0)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _snapshot_today_change_pct(row):
+    """Return today's change in percentage points, e.g. 1.5 for +1.5%."""
+    last = _row_float(row, 'last_price')
+    for key in ('prev_close_price', 'prev_close', 'yesterday_close_price'):
+        prev_close = _row_float(row, key)
+        if last > 0 and prev_close > 0:
+            return (last / prev_close - 1.0) * 100.0
+
+    for key in ('change_rate', 'change_rate_percentage', 'change_pct',
+                'change_percentage', 'change_ratio'):
+        if key not in row:
+            continue
+        raw = _row_float(row, key)
+        if not raw:
+            return 0.0
+        return raw * 100.0 if 'ratio' in key else raw
+    return 0.0
+
+
+def _overheat_penalty(today_change_pct):
+    over = max(abs(today_change_pct) - OVERHEAT_THRESHOLD_PCT, 0.0)
+    return min(OVERHEAT_FACTOR * math.sqrt(over), OVERHEAT_CAP)
+
+
 def _copy_to_gdrive(log_path, market):
     try:
         dest_dir = GDRIVE_LOG_DIR[market]
@@ -270,6 +304,25 @@ def _print_group(label, cands, top_n, total,
             print(f"    {r['code']:<10} {bear_s}{hot:>7} {score_s}")
 
 
+def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
+    display = cands if top_n is None else cands[:top_n]
+    suffix = '全件' if top_n is None else f'TOP{top_n}'
+    print(f"\n  【{label}】{suffix}  ({len(cands)}銘柄合格 / {total}銘柄中)")
+    if not display:
+        print("    条件を満たす銘柄なし")
+        return
+    bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
+    print(f"    {'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'過熱減点':>9} {'小口過熱':>7}")
+    print("    " + "-" * 66)
+    for r in display:
+        hot = '⚠' if r.get('small_dom') else ''
+        bear_s = f"{(r.get('bear_etf_code') or '--'):>8} " if show_bear_etf else ''
+        print(f"    {r['code']:<10} {bear_s}"
+              f"{r.get('enhanced2_score', 0.0):>11.3f} "
+              f"{r.get('today_change_pct', 0.0):>11.3f} "
+              f"{r.get('overheat_penalty', 0.0):>9.3f} {hot:>7}")
+
+
 def _print_sell_watch(cands, total, show_bear_etf=True):
     print(f"\n  【保有銘柄・売却注意】({len(cands)}銘柄該当 / {total}銘柄中)")
     if not cands:
@@ -340,17 +393,12 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
         if r == RET_OK and not s.empty:
             for _, row in s.iterrows():
                 c = str(row.get('code', ''))
-                # 日本株等は時間外フィールドが 'N/A' 文字列で返るため安全変換する
-                def sf(key):
-                    try:
-                        return float(row.get(key, 0) or 0)
-                    except (ValueError, TypeError):
-                        return 0.0
                 snap_info[c] = {
                     'name': str(row.get('name', '') or ''),
-                    'turnover': sf('turnover'), 'last': sf('last_price'),
-                    'avg_price': sf('avg_price'), 'after': sf('after_price'),
-                    'overnight': sf('overnight_price'), 'pre': sf('pre_price'),
+                    'turnover': _row_float(row, 'turnover'), 'last': _row_float(row, 'last_price'),
+                    'avg_price': _row_float(row, 'avg_price'), 'after': _row_float(row, 'after_price'),
+                    'overnight': _row_float(row, 'overnight_price'), 'pre': _row_float(row, 'pre_price'),
+                    'today_change_pct': _snapshot_today_change_pct(row),
                 }
         elif len(codes) == 1:
             print(f"\n    [snapshot] スキップ: {codes[0]} ({s})", end='')
@@ -417,6 +465,9 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
         is_target_etf = is_etf(c)
         bear_etf_code = find_bear_etf_code(market, c, info.get('name', ''), is_target_etf)
         ext_dev, ext_sess = ext_confirm(info, market)
+        enhanced1_score_pct = ((sort_weighted_net / tov) * 100.0) if tov > 0 else 0.0
+        today_change_pct = info.get('today_change_pct', 0.0)
+        overheat_penalty = _overheat_penalty(today_change_pct)
         return {
             'code': c, 'super_net': d['super_net'], 'big_net': big,
             'mid_net': d['mid_net'], 'small_net': d['small_net'],
@@ -425,6 +476,9 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
             'vwap_dev': round(avg_price_dev, 5) if avg_price_dev is not None else None,
             'ingest_ratio': (weighted_net / tov) if tov > 0 else 0.0,
             'sort_ingest_ratio': (sort_weighted_net / tov) if tov > 0 else 0.0,
+            'today_change_pct': today_change_pct,
+            'overheat_penalty': overheat_penalty,
+            'enhanced2_score': enhanced1_score_pct - overheat_penalty,
             'big_med5': f.get('big_med5', 0.0),
             'big_component_med5': f.get('big_component_med5', 0.0),
             'small_med5': f.get('small_med5', 0.0),
@@ -472,11 +526,58 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True):
         out.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)  # 小口を0.25逆方向に効かせた食い込み率
         return out
 
+    def build_enhanced2(codes, etf):
+        out = [pass_map[c] for c in codes if c in pass_map and bool(pass_map[c]['is_etf']) == etf]
+        out.sort(key=lambda x: x['enhanced2_score'], reverse=True)
+        return out
+
     elapsed = (datetime.now() - t0).total_seconds()
     print(f"\n{'='*78}")
     print(f"  分析結果  {cfg['label']}  ({datetime.now().strftime('%H:%M:%S')}  経過: {elapsed:.0f}秒)")
     print(f"{'='*78}")
 
+    print("\n  【改善版2結果】"
+          "  (改善版条件 / スコア: 改善版補正食込% - 過熱減点)")
+    if market == 'jp':
+        etf_only = bool(_ETF_SET)
+        jp_order = (['保有銘柄'] if '保有銘柄' in groups else []) + cfg['watchlists']
+        for g in jp_order:
+            if g == '保有銘柄':
+                c = build_enhanced2(groups[g], etf=True) + build_enhanced2(groups[g], etf=False)
+                c.sort(key=lambda x: x['enhanced2_score'], reverse=True)
+                total = len(groups[g])
+            else:
+                c = build_enhanced2(groups[g], etf=True) if etf_only else \
+                    sorted([pass_map[x] for x in groups[g] if x in pass_map],
+                           key=lambda x: x['enhanced2_score'], reverse=True)
+                total = sum(1 for x in groups[g] if is_etf(x)) if etf_only else len(groups[g])
+            _print_group_enhanced2(g, c, top_n=top_n, total=total, show_bear_etf=False)
+    else:
+        order = (['保有銘柄'] if '保有銘柄' in groups else []) + cfg['watchlists']
+        native_codes_e2 = set()
+        for g in order:
+            if g in ETF_NATIVE_WATCHLISTS:
+                c = build_enhanced2(groups[g], etf=True) + build_enhanced2(groups[g], etf=False)
+                c.sort(key=lambda x: x['enhanced2_score'], reverse=True)
+                native_codes_e2.update(x['code'] for x in c)
+                _print_group_enhanced2(g, c, top_n=top_n, total=len(groups[g]))
+            else:
+                if g == '保有銘柄':
+                    c = build_enhanced2(groups[g], etf=True) + build_enhanced2(groups[g], etf=False)
+                    c.sort(key=lambda x: x['enhanced2_score'], reverse=True)
+                    _print_group_enhanced2(g, c, top_n=None, total=len(groups[g]))
+                else:
+                    c = build_enhanced2(groups[g], etf=False)
+                    _print_group_enhanced2(g, c, top_n=top_n,
+                                           total=len([x for x in groups[g] if not is_etf(x)]))
+        etf_pass_e2 = sorted([v for v in pass_map.values()
+                              if v['is_etf'] and v['code'] not in native_codes_e2],
+                             key=lambda x: x['enhanced2_score'], reverse=True)
+        _print_group_enhanced2('ETF(参考・分散用)', etf_pass_e2, top_n=None,
+                               total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes_e2))
+
+    print("\n  【改善版結果】"
+          "  (改善版条件 / ソート: 補正食込率)")
     group_cands = {}
 
     if market == 'jp':
