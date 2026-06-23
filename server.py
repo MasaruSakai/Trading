@@ -16,6 +16,8 @@ import sys, os, json, time, socket, argparse, threading, subprocess
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
+import urllib.request
+import urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(HERE, 'logs')
@@ -703,6 +705,145 @@ function sendQuickPrompt(promptText) {
 """
 
 
+# ── AI Advisor Integration ───────────────────────────────────────────────────
+def _load_gemini_api_key():
+    # 1. Read from os.environ
+    key = os.environ.get("GEMINI_API_KEY")
+    if key:
+        return key.strip()
+
+    # 2. Try config/gemini_key.txt relative to HERE
+    config_path = os.path.join(HERE, 'config', 'gemini_key.txt')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                key = f.read().strip()
+                if key:
+                    return key
+        except Exception:
+            pass
+
+    # 3. Try .env relative to HERE
+    env_path = os.path.join(HERE, '.env')
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('GEMINI_API_KEY='):
+                        parts = line.split('=', 1)
+                        if len(parts) == 2:
+                            key = parts[1].strip()
+                            if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
+                                key = key[1:-1].strip()
+                            if key:
+                                return key
+        except Exception:
+            pass
+
+    return None
+
+
+def _get_project_context():
+    context_parts = []
+    
+    # 1. Read .agents/handover.md if it exists
+    handover_path = os.path.join(HERE, '.agents', 'handover.md')
+    if os.path.exists(handover_path):
+        try:
+            with open(handover_path, 'r', encoding='utf-8') as f:
+                context_parts.append(f"--- handover.md ---\n{f.read()}")
+        except Exception as e:
+            context_parts.append(f"--- handover.md ---\nError reading: {e}")
+            
+    # 2. Read .agents/AGENTS.md if it exists
+    agents_path = os.path.join(HERE, '.agents', 'AGENTS.md')
+    if os.path.exists(agents_path):
+        try:
+            with open(agents_path, 'r', encoding='utf-8') as f:
+                context_parts.append(f"--- AGENTS.md ---\n{f.read()}")
+        except Exception as e:
+            context_parts.append(f"--- AGENTS.md ---\nError reading: {e}")
+            
+    # 3. Find the latest .log file in logs/ (excluding launchd logs) and read its contents
+    log_dir = os.path.join(HERE, 'logs')
+    if os.path.exists(log_dir):
+        try:
+            logs = [f for f in os.listdir(log_dir)
+                    if f.endswith('.log') and not f.startswith('launchd')]
+            if logs:
+                newest = max(logs, key=lambda f: os.path.getmtime(os.path.join(log_dir, f)))
+                newest_path = os.path.join(log_dir, newest)
+                with open(newest_path, 'r', encoding='utf-8') as f:
+                    context_parts.append(f"--- Latest Log ({newest}) ---\n{f.read()}")
+            else:
+                context_parts.append("--- Latest Log ---\nNo logs found.")
+        except Exception as e:
+            context_parts.append(f"--- Latest Log ---\nError reading logs: {e}")
+    else:
+        context_parts.append("--- Latest Log ---\nlogs/ directory does not exist.")
+        
+    return "\n\n".join(context_parts)
+
+
+def _call_gemini_api(api_key, context, message):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
+    prompt_text = f"System Context:\n{context}\n\nUser Question: {message}"
+    
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": prompt_text
+                    }
+                ]
+            }
+        ],
+        "systemInstruction": {
+            "parts": [
+                {
+                    "text": "あなたは優秀な資産運用アドバイザーおよびテクニカルリード補佐です。ユーザーから提供されたプロジェクト状況（handover.md）、ルール（AGENTS.md）、最新のログファイルの内容を完全に把握した上で、質問に日本語で親身かつ的確に答えてください。必要に応じて次のアクションや改善案を提案してください。"
+                }
+            ]
+        }
+    }
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
+    
+    req_data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(url, data=req_data, headers=headers, method='POST')
+    
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            res_data = response.read().decode('utf-8')
+            res_json = json.loads(res_data)
+            
+            candidates = res_json.get("candidates", [])
+            if candidates:
+                content = candidates[0].get("content", {})
+                parts = content.get("parts", [])
+                if parts:
+                    return parts[0].get("text", "")
+            return "エラー: レスポンスを解析できませんでした。"
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode('utf-8')
+            err_json = json.loads(err_body)
+            err_msg = err_json.get("error", {}).get("message", str(e))
+        except Exception:
+            err_msg = str(e)
+        return f"Gemini API エラー (HTTP {e.code}): {err_msg}"
+    except urllib.error.URLError as e:
+        return f"Gemini API 接続エラー: {e.reason}"
+    except Exception as e:
+        return f"システムエラー: {e}"
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype='text/html; charset=utf-8'):
         data = body.encode('utf-8') if isinstance(body, str) else body
@@ -777,14 +918,12 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 msg_text = ''
             
-            if "日本市場" in msg_text:
-                reply = "本日の日本市場では、非鉄金属ETF（1623）が価格乖離の解消により14.07%急落しました。一方、フジクラ（5803）は上方修正を受けて+5.29%の上昇となっています。"
-            elif "米国株" in msg_text or "米国" in msg_text:
-                reply = "今夜の米国市場オープンに向け、保有銘柄のSPOTやBE、CAHのプリオープン動向を監視しています。特にBEは直近で大口資金流入が活発です。"
-            elif "引き継ぎノート" in msg_text:
-                reply = "引き継ぎノート（handover.md）には、モバイルUIの最適化およびチェックアウト禁止ルールが記録されています。PCに戻った際に変更を適用する準備ができています。"
+            api_key = _load_gemini_api_key()
+            if not api_key:
+                reply = "エラー: APIキーが設定されていません。config/gemini_key.txt にキーを保存してください。"
             else:
-                reply = "ご相談ありがとうございます！私はあなたの資産運用のアドバイザーです。本日の取引方針やスイングトレードの仮説について何でも聞いてください。"
+                context = _get_project_context()
+                reply = _call_gemini_api(api_key, context, msg_text)
                 
             self._send(200, json.dumps({'reply': reply}), 'application/json; charset=utf-8')
         else:
