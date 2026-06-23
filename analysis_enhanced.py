@@ -543,104 +543,101 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     print(f"  分析結果  {cfg['label']}  ({datetime.now().strftime('%H:%M:%S')}  経過: {elapsed:.0f}秒)")
     print(f"{'='*78}")
 
-    print("\n  【改善版2結果】"
-          "  (改善版条件 / スコア: 改善版補正食込% - 過熱減点)")
-    if market == 'jp':
-        etf_only = bool(_ETF_SET)
-        for g in group_order:
+    group_cands = {}
+    order = group_order
+
+    def _separator(title):
+        print(f"\n{'='*78}")
+        print(f"  {title}")
+        print(f"{'='*78}")
+
+    def _build_enhanced1_group(g):
+        if market == 'jp':
+            etf_only = bool(_ETF_SET)
             if g == '保有銘柄':
-                c = build_enhanced2(groups[g], etf=True) + build_enhanced2(groups[g], etf=False)
-                c.sort(key=lambda x: x['enhanced2_score'], reverse=True)
-                total = len(groups[g])
-            else:
+                c = build(groups[g], etf=True) + build(groups[g], etf=False)
+                c.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)
+                return c, len(groups[g])
+            c = build(groups[g], etf=True) if etf_only else \
+                sorted([pass_map[x] for x in groups[g] if x in pass_map],
+                       key=lambda x: x['sort_ingest_ratio'], reverse=True)
+            total = sum(1 for x in groups[g] if is_etf(x)) if etf_only else len(groups[g])
+            return c, total
+
+        if g in ETF_NATIVE_WATCHLISTS:
+            c = build(groups[g], etf=True) + build(groups[g], etf=False)
+            c.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)
+            return c, len(groups[g])
+        if g == '保有銘柄':
+            c = build(groups[g], etf=True) + build(groups[g], etf=False)
+            c.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)
+            return c, len(groups[g])
+        c = build(groups[g], etf=False)
+        return c, len([x for x in groups[g] if not is_etf(x)])
+
+    # signals は従来の改善版1候補を維持する。表示対象とは分離する。
+    native_codes = set()
+    for g in order:
+        c, _ = _build_enhanced1_group(g)
+        group_cands[g] = c
+        if market == 'us' and g in ETF_NATIVE_WATCHLISTS:
+            native_codes.update(x['code'] for x in c)
+    if market == 'us' and not holdings_only:
+        group_cands['ETF(参考)'] = sorted(
+            [v for v in pass_map.values()
+             if v['is_etf'] and v['code'] not in native_codes],
+            key=lambda x: x['sort_ingest_ratio'], reverse=True)
+
+    if '保有銘柄' in groups:
+        _separator('保有銘柄（改善版: 保有継続/売却判断）')
+        c = group_cands.get('保有銘柄', [])
+        _print_group('保有銘柄', c, top_n=None if market == 'us' else top_n,
+                     total=len(groups['保有銘柄']),
+                     show_bear_etf=(market == 'us'),
+                     show_change_pct=holdings_only)
+        _print_sell_watch(sell_watch, total=len(groups['保有銘柄']),
+                          show_bear_etf=(market == 'us'))
+
+    if not holdings_only:
+        _separator('新規候補（改善版2: 過熱補正あり）')
+        if market == 'jp':
+            etf_only = bool(_ETF_SET)
+            if etf_only:
+                print("  ※ ETFのみ表示(少額のためETFで対応)")
+            for g in [x for x in order if x != '保有銘柄']:
                 c = build_enhanced2(groups[g], etf=True) if etf_only else \
                     sorted([pass_map[x] for x in groups[g] if x in pass_map],
                            key=lambda x: x['enhanced2_score'], reverse=True)
-                total = sum(1 for x in groups[g] if is_etf(x)) if etf_only else len(groups[g])
-            _print_group_enhanced2(g, c, top_n=top_n, total=total, show_bear_etf=False)
-    else:
-        order = group_order
-        native_codes_e2 = set()
-        for g in order:
-            if g in ETF_NATIVE_WATCHLISTS:
-                c = build_enhanced2(groups[g], etf=True) + build_enhanced2(groups[g], etf=False)
-                c.sort(key=lambda x: x['enhanced2_score'], reverse=True)
-                native_codes_e2.update(x['code'] for x in c)
-                _print_group_enhanced2(g, c, top_n=top_n, total=len(groups[g]))
-            else:
-                if g == '保有銘柄':
+                c = [r for r in c if r['code'] not in holding_codes]
+                total = sum(1 for x in groups[g] if is_etf(x) and x not in holding_codes) \
+                    if etf_only else len([x for x in groups[g] if x not in holding_codes])
+                _print_group_enhanced2(g, c, top_n=top_n, total=total, show_bear_etf=False)
+        else:
+            native_codes_e2 = set()
+            for g in [x for x in order if x != '保有銘柄']:
+                if g in ETF_NATIVE_WATCHLISTS:
                     c = build_enhanced2(groups[g], etf=True) + build_enhanced2(groups[g], etf=False)
+                    c = [r for r in c if r['code'] not in holding_codes]
                     c.sort(key=lambda x: x['enhanced2_score'], reverse=True)
-                    _print_group_enhanced2(g, c, top_n=None, total=len(groups[g]))
+                    native_codes_e2.update(x['code'] for x in c)
+                    _print_group_enhanced2(g, c, top_n=top_n,
+                                           total=len([x for x in groups[g] if x not in holding_codes]))
                 else:
                     c = build_enhanced2(groups[g], etf=False)
+                    c = [r for r in c if r['code'] not in holding_codes]
                     _print_group_enhanced2(g, c, top_n=top_n,
-                                           total=len([x for x in groups[g] if not is_etf(x)]))
-        if not holdings_only:
+                                           total=len([x for x in groups[g]
+                                                      if not is_etf(x) and x not in holding_codes]))
             etf_pass_e2 = sorted([v for v in pass_map.values()
-                                  if v['is_etf'] and v['code'] not in native_codes_e2],
+                                  if v['is_etf']
+                                  and v['code'] not in native_codes_e2
+                                  and v['code'] not in holding_codes],
                                  key=lambda x: x['enhanced2_score'], reverse=True)
             _print_group_enhanced2('ETF(参考・分散用)', etf_pass_e2, top_n=None,
-                                   total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes_e2))
-
-    print("\n  【改善版結果】"
-          "  (改善版条件 / ソート: 補正食込率)")
-    group_cands = {}
-
-    if market == 'jp':
-        # 日本市場は標準版と同じくETFのみをグループ別に表示(少額のためETFで対応)。
-        # ただし「保有銘柄」はお気に入り「Eスマート証券」を保有相当として個別株も表示する。
-        # ETF判定取得に失敗(空集合)時のみ全件表示にフォールバック。
-        etf_only = bool(_ETF_SET)
-        if etf_only:
-            print("  ※ ETFのみ表示(少額のためETFで対応)")
-        for g in group_order:
-            if g == '保有銘柄':
-                c = build(groups[g], etf=True) + build(groups[g], etf=False)
-                c.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)
-                total = len(groups[g])
-            else:
-                c = build(groups[g], etf=True) if etf_only else \
-                    sorted([pass_map[x] for x in groups[g] if x in pass_map],
-                           key=lambda x: x['sort_ingest_ratio'], reverse=True)
-                total = sum(1 for x in groups[g] if is_etf(x)) if etf_only else len(groups[g])
-            group_cands[g] = c
-            _print_group(g, c, top_n=top_n, total=total, show_bear_etf=False,
-                         show_change_pct=holdings_only)
-            if g == '保有銘柄':
-                _print_sell_watch(sell_watch, total=len(groups[g]), show_bear_etf=False)
-    else:
-        order = group_order
-        native_codes = set()    # ETF分離せず自グループ表示する銘柄(ETFセクションから除外)
-        for g in order:
-            if g in ETF_NATIVE_WATCHLISTS:    # 元々ETF構成: 分離せずそのまま表示
-                c = build(groups[g], etf=True) + build(groups[g], etf=False)
-                c.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)
-                native_codes.update(x['code'] for x in c)
-                _print_group(g, c, top_n=top_n, total=len(groups[g]),
-                             show_change_pct=holdings_only)
-            else:
-                if g == '保有銘柄':
-                    c = build(groups[g], etf=True) + build(groups[g], etf=False)
-                    c.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)
-                    _print_group(g, c, top_n=None, total=len(groups[g]),
-                                 show_change_pct=holdings_only)
-                    _print_sell_watch(sell_watch, total=len(groups[g]))
-                else:
-                    c = build(groups[g], etf=False)
-                    _print_group(g, c, top_n=top_n,
-                                 total=len([x for x in groups[g] if not is_etf(x)]),
-                                 show_change_pct=holdings_only)
-            group_cands[g] = c
-
-        # ETFは分離して残す(参考・分散用)。元々ETF構成グループの分は重複させない。
-        if not holdings_only:
-            etf_pass = sorted([v for v in pass_map.values()
-                               if v['is_etf'] and v['code'] not in native_codes],
-                              key=lambda x: x['sort_ingest_ratio'], reverse=True)
-            group_cands['ETF(参考)'] = etf_pass
-            _print_group('ETF(参考・分散用)', etf_pass, top_n=None,
-                         total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes))
+                                   total=sum(1 for c in all_codes
+                                             if is_etf(c)
+                                             and c not in native_codes_e2
+                                             and c not in holding_codes))
 
     if show_standard_reference:
         # ── 標準版結果(参考) ─────────────────────────────────────────────────────
@@ -651,8 +648,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             out.sort(key=lambda x: x['standard_sort_med5'], reverse=True)
             return out
 
-        print(f"\n{'='*78}")
-        print(f"  【参考】標準版結果  (フィルタ②: 4/5日プラス / ソート: 超大口5日中央値 + 大口5日中央値*0.5 - 小口5日中央値*0.25)")
+        _separator('参考: 標準版（継続性確認）')
+        print("  フィルタ②: 4/5日プラス / ソート: 超大口5日中央値 + 大口5日中央値*0.5 - 小口5日中央値*0.25")
         if market == 'jp':
             for g in group_order:
                 if g == '保有銘柄':
