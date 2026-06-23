@@ -289,9 +289,14 @@ function setBusy(busy) {
 }
 
 function render(s) {
-  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 100;
+  const isRunning = s.running;
   log.textContent = s.lines.length ? s.lines.join('\\n') : '（出力なし）';
-  if (atBottom) log.scrollTop = log.scrollHeight;
+  if (isRunning || atBottom) {
+    setTimeout(() => {
+      log.scrollTop = log.scrollHeight;
+    }, 50);
+  }
   const name = LABEL[s.market] || '';
   if (s.running) {
     setBusy(true);
