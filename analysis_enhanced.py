@@ -569,7 +569,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         pl_ratio = holding_pls.get(c, 0.0)
         bonus = 0.0
         if c in holding_codes:
-            bonus = pl_ratio * 0.2
+            bonus = max(pl_ratio * 0.2, 0.0)
 
         sort_ingest_ratio = (sort_weighted_net / tov) if tov > 0 else 0.0
         enhanced2_score = enhanced1_score_pct - overheat_penalty
