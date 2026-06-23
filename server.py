@@ -894,13 +894,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(403, 'Forbidden: localhost only')
                 return
             
-            def delayed_restart():
-                time.sleep(0.5)
-                import os
-                os._exit(0)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Connection', 'close')
+            response_bytes = json.dumps({'ok': True, 'message': 'restarting'}).encode('utf-8')
+            self.send_header('Content-Length', str(len(response_bytes)))
+            self.end_headers()
+            self.wfile.write(response_bytes)
+            self.wfile.flush()
             
-            threading.Thread(target=delayed_restart, daemon=True).start()
-            self._send(200, json.dumps({'ok': True, 'message': 'restarting'}), 'application/json')
+            time.sleep(0.5)
+            import os
+            os._exit(0)
         else:
             self._send(404, 'not found')
 
