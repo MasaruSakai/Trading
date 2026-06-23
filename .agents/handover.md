@@ -27,6 +27,7 @@
     *   [server.py](file:///Users/masaru/Projects/Trading/server.py) に `/chat` ルートを追加し、Outfitフォントを用いたモバイル最適化チャットUIを実装。キーワード応答ダミーAPI（`/api/chat`）を実装し、メイン画面のヘッダーに `💬 相談チャット` ボタンを設置（PR #25 -> #26）。
 *   **相談用チャットUIの本物 Gemini API への接続**:
     *   [server.py](file:///Users/masaru/Projects/Trading/server.py) の `/api/chat` エンドポイントを本物の Google Gemini API（`gemini-2.5-flash`）に接続。起動時に環境変数、`config/gemini_key.txt`、`.env` からキーを自動ロードし、ローカルの `handover.md`、`AGENTS.md`、最新ログファイルをコンテキストとして自動付与して応答する仕組みを実装（PR #29 -> #30）。
+    *   モデル `gemini-2.5-flash` を `/v1/` エンドポイントで呼び出した際に発生した HTTP 400 エラー（`systemInstruction` が未サポート）を解決するため、エンドポイントを `/v1beta/` に差し戻す修正を適用（PR #37 -> #38）。
 
 
 
