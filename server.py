@@ -894,10 +894,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(403, 'Forbidden: localhost only')
                 return
             
-            log_file = os.path.join(LOG_DIR, 'restart_debug.log')
-            with open(log_file, 'w', encoding='utf-8') as f:
-                f.write("1. Check passed\n")
-            
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
@@ -907,26 +903,10 @@ class Handler(BaseHTTPRequestHandler):
             response_bytes = json.dumps({'ok': True, 'message': 'restarting'}).encode('utf-8')
             self.send_header('Content-Length', str(len(response_bytes)))
             self.end_headers()
-            
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write("2. Headers sent\n")
-                
             self.wfile.write(response_bytes)
-            
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write("3. Bytes written\n")
-                
             self.wfile.flush()
             
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write("4. Flushed. Sleeping...\n")
-            
             time.sleep(0.5)
-            
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write("5. Sleep done. Exiting...\n")
-                
-            import os
             os._exit(0)
         else:
             self._send(404, 'not found')
