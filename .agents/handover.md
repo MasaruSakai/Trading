@@ -20,8 +20,10 @@
     *   「メイン環境（/Users/masaru/Projects/Trading）での `git checkout` 禁止」ルールの追加。
 *   **kabuステーションAPI代替ボタンの非表示化**:
     *   [server.py](file:///Users/masaru/Projects/Trading/server.py) 内の該当HTMLセクションをコメントアウト（PR #13 -> #14）。
-*   **iPhone 16e 向けのモバイルUI最適化**:
-    *   [server.py](file:///Users/masaru/Projects/Trading/server.py) にモバイル専用のメディアクエリを追加。画面高さを固定（100vh/Flexbox）し、ボタンや余白をスリム化しつつタップ可能領域を確保し、ログ表示preエリアが画面の残り全縦幅を埋めるように改修（PR #15 -> #16）。
+*   **iPhone 16e 向けのモバイルUI最適化と高さ・下部余白の更なる調整**:
+    *   [server.py](file:///Users/masaru/Projects/Trading/server.py) にモバイル専用のメディアクエリを追加。画面高さを固定（Flexbox）し、ボタンや余白をスリム化しつつタップ可能領域を確保し、ログ表示preエリアが画面の残り全縦幅を埋めるように改修（PR #15 -> #16）。
+    *   さらに左右・下部のマージンとパディングを極限まで削り、高さを最新の動的ビューポート高 `100dvh` に置き換え、下部セーフエリアの無駄な隙間を `max(8px, env(safe-area-inset-bottom) - 16px)` で削減（PR #19 -> #20, PR #21 -> #22）。
+
 
 ---
 
