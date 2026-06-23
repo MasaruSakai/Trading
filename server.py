@@ -161,7 +161,7 @@ PAGE = """<!doctype html>
     body {
       display: flex;
       flex-direction: column;
-      padding: env(safe-area-inset-top) 12px env(safe-area-inset-bottom);
+      padding: env(safe-area-inset-top) 6px env(safe-area-inset-bottom, 6px);
     }
     header {
       padding: 8px 0 4px;
@@ -204,7 +204,7 @@ PAGE = """<!doctype html>
       min-height: 0;
       max-height: none;
       font-size: 11px;
-      padding: 10px;
+      padding: 6px;
       border-radius: 8px;
     }
   }
