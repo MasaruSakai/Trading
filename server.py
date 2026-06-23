@@ -152,6 +152,62 @@ PAGE = """<!doctype html>
         padding: 14px; font-size: 12px; line-height: 1.5; overflow-x: auto;
         white-space: pre; min-height: 200px; max-height: 65vh; overflow-y: auto;
         font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  @media (max-width: 480px) {
+    html, body {
+      height: 100vh;
+      height: -webkit-fill-available;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      padding: env(safe-area-inset-top) 12px env(safe-area-inset-bottom);
+    }
+    header {
+      padding: 8px 0 4px;
+    }
+    h1 {
+      font-size: 18px;
+    }
+    .sub {
+      font-size: 11px;
+      margin-top: 2px;
+    }
+    section {
+      margin: 6px 0;
+    }
+    .sec-label {
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+    .btns {
+      gap: 8px;
+    }
+    button {
+      padding: 12px 8px;
+      font-size: 14px;
+      border-radius: 10px;
+    }
+    .status {
+      margin: 6px 0;
+      font-size: 12px;
+      min-height: 18px;
+    }
+    .refresh {
+      padding: 6px 10px;
+      font-size: 11px;
+      border-radius: 8px;
+    }
+    pre {
+      flex: 1;
+      margin: 0;
+      min-height: 0;
+      max-height: none;
+      font-size: 11px;
+      padding: 10px;
+      border-radius: 8px;
+    }
+  }
 </style>
 </head>
 <body>
