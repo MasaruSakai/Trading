@@ -373,18 +373,47 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     # Step 1: 保有 + ウォッチリスト
     groups = {}
     holding_pls = {}
-
-    # Load manual override/JP holdings PL ratios from config/holdings_pl.json
     json_pls = {}
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'holdings_pl.json')
-    if os.path.exists(config_path):
+
+    if market == 'jp':
+        # Fetch JP holdings PL from kabu station proxy API
+        kabu_base_url = os.environ.get("KABU_BASE_URL", "http://10.215.1.57:18180").rstrip("/")
+        url = f"{kabu_base_url}/kabusapi/positions?product=0"
         try:
+            import urllib.request
+            import urllib.error
             import json
-            with open(config_path, 'r', encoding='utf-8') as f:
-                json_pls = json.load(f)
-            json_pls = {str(k): float(v) for k, v in json_pls.items()}
+            print(f"  [holdings_pl] JP保有銘柄P/L取得中 ({url})...", end=' ', flush=True)
+            req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                res_data = json.loads(response.read().decode("utf-8"))
+                api_count = 0
+                for pos in res_data if isinstance(res_data, list) else []:
+                    symbol = pos.get("Symbol") if pos.get("Symbol") is not None else pos.get("symbol")
+                    pl_rate = pos.get("ProfitLossRate") if pos.get("ProfitLossRate") is not None else pos.get("ProfitLossRatio")
+                    if pl_rate is None:
+                        pl_rate = pos.get("pl_rate")
+                    if symbol is not None and pl_rate is not None:
+                        code = f"JP.{symbol}"
+                        try:
+                            holding_pls[code] = float(pl_rate)
+                            api_count += 1
+                        except (ValueError, TypeError):
+                            holding_pls[code] = 0.0
+                print(f"{api_count}件取得")
         except Exception as e:
-            print(f"  [holdings_pl] config/holdings_pl.json 読み込み失敗: {e}")
+            print(f"\n  [holdings_pl] Warning: kabu station positions API 取得失敗: {e}. Fallback to 0.0%.")
+    else:
+        # Load manual override/JP holdings PL ratios from config/holdings_pl.json
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config', 'holdings_pl.json')
+        if os.path.exists(config_path):
+            try:
+                import json
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    json_pls = json.load(f)
+                json_pls = {str(k): float(v) for k, v in json_pls.items()}
+            except Exception as e:
+                print(f"  [holdings_pl] config/holdings_pl.json 読み込み失敗: {e}")
 
     if cfg.get('holdings'):
         print("  [1/3] 保有銘柄取得中...", end=' ', flush=True)
@@ -419,8 +448,15 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     if cfg.get('holdings_watchlist'):
         fav = cfg['holdings_watchlist']
         r, data = q.get_user_security(fav)
-        groups['保有銘柄'] = data['code'].tolist() if r == RET_OK and not data.empty else []
-        print(f"(保有相当: {fav} {len(groups['保有銘柄'])}銘柄) ", end='', flush=True)
+        watchlist_codes = data['code'].tolist() if r == RET_OK and not data.empty else []
+        # Merge with API holdings
+        api_codes = [c for c in holding_pls.keys() if c.startswith('JP.')]
+        merged_holdings = list(watchlist_codes)
+        for c in api_codes:
+            if c not in merged_holdings:
+                merged_holdings.append(c)
+        groups['保有銘柄'] = merged_holdings
+        print(f"(保有相当: {fav} {len(watchlist_codes)}銘柄 + API {len(api_codes)}銘柄) ", end='', flush=True)
         time.sleep(0.2)
     if not holdings_only:
         for g in cfg['watchlists']:
