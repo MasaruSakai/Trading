@@ -218,7 +218,7 @@ PAGE = """<!doctype html>
 <header>
   <div style="display: flex; justify-content: space-between; align-items: center;">
     <h1>📈 Capital Flow Analysis</h1>
-    <a href="/kabu" class="back-link">kabu分析 →</a>
+    <a href="/kabu" class="back-link">kabu分析</a>
   </div>
   <div class="sub">食込率 + 連続性 + 時間外確認 + ETF分離</div>
 </header>
@@ -423,7 +423,7 @@ KABU_PAGE = """<!doctype html>
     <h1>📈 kabu ETF代替分析</h1>
     <div class="sub">kabuステーションAPI 経由で板圧力・需給分析を行います</div>
   </div>
-  <a href="/" class="back-link">← メイン分析</a>
+  <a href="/" class="back-link">メイン分析</a>
 </header>
 <section>
   <div class="sec-label">代替スキャン</div>
