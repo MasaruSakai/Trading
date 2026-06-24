@@ -74,8 +74,16 @@ FALLBACK_ETF_SYMBOLS = [
     "1357", "2563", "1366", "314A", "2638", "2033", "1456", "2868", "2625", "235A",
     "2627", "2648", "1494", "237A", "2513", "2518", "1356", "1570", "200A", "492A",
     "182A", "1479", "2088", "360A", "2066", "2851", "2082", "2047", "183A", "2525",
-    "2524", "1675", "1477", "2516", "1321",
+    "2524", "1675", "1477", "2516", "1321", "1655",
 ]
+
+EXCLUDE_INDEX_ETFS = {
+    "1320", "1346", "1397", "2525", "1570", "1357", "1458", "1459", "1579", "1360", "1366", "1456",
+    "1308", "1348", "1475", "2524", "2088", "1568", "1356", "1457", "1368", "1367",
+    "2568", "2631", "2840", "2841", "2243",
+    "2558", "2521", "2563", "2633",
+    "1591", "1592", "1593", "1599", "1305", "1489", "1478", "1330"
+}
 
 
 class Tee:
@@ -222,6 +230,8 @@ def fetch_ranked_symbols(client, universe_size, ranking_type, exchange_division,
         code = _code_from_ranking_row(row)
         if not code:
             continue
+        if etf_only and code in EXCLUDE_INDEX_ETFS:
+            continue
         ranking_by_symbol[code] = _merge_ranking_row(None, row, ranking_type)
 
     rows = list(ranking_by_symbol.values())
@@ -235,6 +245,8 @@ def fetch_ranked_symbols(client, universe_size, ranking_type, exchange_division,
             break
     if etf_only and len(symbols) < universe_size:
         for code in FALLBACK_ETF_SYMBOLS:
+            if code in EXCLUDE_INDEX_ETFS:
+                continue
             if code not in symbols:
                 symbols.append(code)
                 ranking_by_symbol.setdefault(code, {"Symbol": code, "SymbolName": "", "_RankingTypes": []})
