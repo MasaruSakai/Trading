@@ -224,6 +224,23 @@ def _snapshot_today_change_pct(row):
     return 0.0
 
 
+def _get_us_market_session():
+    """Return 'PRE_MARKET', 'REGULAR', 'AFTER_HOURS', 'OVERNIGHT', or 'CLOSED'."""
+    from zoneinfo import ZoneInfo
+    et = datetime.now(ZoneInfo('America/New_York'))
+    if et.weekday() >= 5:
+        return 'CLOSED'
+    time_str = et.strftime('%H:%M')
+    if '04:00' <= time_str < '09:30':
+        return 'PRE_MARKET'
+    elif '09:30' <= time_str < '16:00':
+        return 'REGULAR'
+    elif '16:00' <= time_str < '20:00':
+        return 'AFTER_HOURS'
+    else:
+        return 'OVERNIGHT'
+
+
 def _overheat_penalty(today_change_pct):
     over = max(abs(today_change_pct) - OVERHEAT_THRESHOLD_PCT, 0.0)
     return min(OVERHEAT_FACTOR * math.sqrt(over), OVERHEAT_CAP)
@@ -486,14 +503,33 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         r, s = q.get_market_snapshot(codes)
         time.sleep(0.3)
         if r == RET_OK and not s.empty:
+            session = _get_us_market_session() if market == 'us' else 'REGULAR'
             for _, row in s.iterrows():
                 c = str(row.get('code', ''))
+                tov = _row_float(row, 'turnover')
+                last = _row_float(row, 'last_price')
+                change = _snapshot_today_change_pct(row)
+                
+                if market == 'us':
+                    if session == 'PRE_MARKET':
+                        last = _row_float(row, 'pre_price') or last
+                        tov = _row_float(row, 'pre_turnover') or tov
+                        change = _row_float(row, 'pre_change_rate') if 'pre_change_rate' in row else change
+                    elif session == 'AFTER_HOURS':
+                        last = _row_float(row, 'after_price') or last
+                        tov = tov + _row_float(row, 'after_turnover')
+                        change = _row_float(row, 'after_change_rate') if 'after_change_rate' in row else change
+                    elif session == 'OVERNIGHT':
+                        last = _row_float(row, 'overnight_price') or last
+                        tov = tov + _row_float(row, 'after_turnover') + _row_float(row, 'overnight_turnover')
+                        change = _row_float(row, 'overnight_change_rate') if 'overnight_change_rate' in row else change
+
                 snap_info[c] = {
                     'name': str(row.get('name', '') or ''),
-                    'turnover': _row_float(row, 'turnover'), 'last': _row_float(row, 'last_price'),
+                    'turnover': tov, 'last': last,
                     'avg_price': _row_float(row, 'avg_price'), 'after': _row_float(row, 'after_price'),
                     'overnight': _row_float(row, 'overnight_price'), 'pre': _row_float(row, 'pre_price'),
-                    'today_change_pct': _snapshot_today_change_pct(row),
+                    'today_change_pct': change,
                 }
         elif len(codes) == 1:
             print(f"\n    [snapshot] スキップ: {codes[0]} ({s})", end='')
