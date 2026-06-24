@@ -513,15 +513,12 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                 if market == 'us':
                     if session == 'PRE_MARKET':
                         last = _row_float(row, 'pre_price') or last
-                        tov = _row_float(row, 'pre_turnover') or tov
                         change = _row_float(row, 'pre_change_rate') if 'pre_change_rate' in row else change
                     elif session == 'AFTER_HOURS':
                         last = _row_float(row, 'after_price') or last
-                        tov = tov + _row_float(row, 'after_turnover')
                         change = _row_float(row, 'after_change_rate') if 'after_change_rate' in row else change
                     elif session == 'OVERNIGHT':
                         last = _row_float(row, 'overnight_price') or last
-                        tov = tov + _row_float(row, 'after_turnover') + _row_float(row, 'overnight_turnover')
                         change = _row_float(row, 'overnight_change_rate') if 'overnight_change_rate' in row else change
 
                 snap_info[c] = {
