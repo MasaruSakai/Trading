@@ -114,6 +114,10 @@ def make_handler(target_base_url, token_cache, allowed_clients, timeout, auto_au
                     return
                 self._send_json(200, {"ok": True})
                 return
+            if parsed.path in ("/kabusapi/sendorder", "/kabusapi/cancelorder"):
+                self._send_json(403, {"error": "order and cancel endpoints are blocked by proxy security rules"})
+                return
+
             if not parsed.path.startswith("/kabusapi/"):
                 self._send_json(404, {"error": "only /kabusapi/... is proxied"})
                 return
