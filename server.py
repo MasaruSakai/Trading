@@ -52,8 +52,8 @@ MARKETS = {
             '--base-url', os.getenv('KABU_BASE_URL', 'http://10.215.1.57:18180'),
             '--no-token-required',
             '--etf-only',
-            '--universe-size', '10',
-            '--top', '10',
+            '--universe-size', '15',
+            '--top', '0',
         ],
     },
 }
