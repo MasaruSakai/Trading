@@ -220,7 +220,6 @@ PAGE = """<!doctype html>
     <h1>📈 Capital Flow Analysis</h1>
     <a href="/kabu" class="back-link">kabu分析</a>
   </div>
-  <div class="sub">食込率 + 連続性 + 時間外確認 + ETF分離</div>
 </header>
 <section>
   <div class="sec-label">改善版分析</div>
