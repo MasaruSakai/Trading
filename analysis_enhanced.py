@@ -694,7 +694,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     if '保有銘柄' in groups:
         _separator('保有銘柄（改善版: 保有継続/売却判断）')
         c = group_cands.get('保有銘柄', [])
-        _print_group('保有銘柄', c, top_n=None if market == 'us' else top_n,
+        _print_group('保有銘柄', c, top_n=None,
                      total=len(groups['保有銘柄']),
                      show_bear_etf=(market == 'us'),
                      show_change_pct=holdings_only)
@@ -764,7 +764,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                         sorted([strict_pass_map[x] for x in groups[g] if x in strict_pass_map],
                                key=lambda x: x['standard_sort_med5'], reverse=True)
                     total = len(groups[g])
-                _print_group(g, c, top_n=top_n, total=total,
+                _print_group(g, c, top_n=None if g == '保有銘柄' else top_n, total=total,
                              score_key='standard_sort_med5', score_header='標準補正5d',
                              score_percent=False, show_bear_etf=False,
                              show_change_pct=holdings_only)
