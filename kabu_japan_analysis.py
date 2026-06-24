@@ -601,9 +601,9 @@ def main(args):
     board_symbols = list(dict.fromkeys(holding_symbols + symbols[: max(0, args.board_limit)]))
     board_symbols = board_symbols[:40]
 
-    print(f"  [1/2] universe取得: 標準{len(standard_symbols)}銘柄 / 改善{len(surge_symbols)}銘柄 / 約定{len(tick_symbols)}銘柄")
-    print(f"         標準: {standard_source}")
-    print(f"         改善: {surge_source}")
+    print(f"  [1/2] universe取得: 売買代金順{len(standard_symbols)}銘柄 / 売買代金急増{len(surge_symbols)}銘柄 / 約定{len(tick_symbols)}銘柄")
+    print(f"         売買代金順: {standard_source}")
+    print(f"         売買代金急増: {surge_source}")
     print(f"         約定: {tick_source}")
     if extra_holding_symbols:
         print(f"         保有銘柄を追加分析: {len(extra_holding_symbols)}銘柄")
@@ -685,8 +685,8 @@ def main(args):
     sell_watch.sort(key=lambda r: (r["score"], r.get("profit_loss_rate", 0.0)))
     elapsed = (datetime.now() - t0).total_seconds()
     print(
-        f"         完了: ETF標準{len(standard_candidates)}銘柄 / "
-        f"ETF改善{len(surge_candidates)}銘柄 / ETF約定{len(tick_candidates)}銘柄 / "
+        f"         完了: ETF売買代金順{len(standard_candidates)}銘柄 / "
+        f"ETF売買代金急増{len(surge_candidates)}銘柄 / ETF約定{len(tick_candidates)}銘柄 / "
         f"保有{len(holding_candidates)}銘柄 / エラー{len(errors)}件"
     )
     if errors and args.show_errors:
@@ -709,7 +709,7 @@ def main(args):
         args.top,
         surge_source,
         len(surge_symbols),
-        title="改善版（Score順）",
+        title="売買代金急増（Score順）",
     )
     _print_candidates(
         tick_candidates,
@@ -725,7 +725,7 @@ def main(args):
 
             groups = {
                 "売買代金順": standard_candidates,
-                "改善版(Score順)": surge_candidates,
+                "売買代金急増(Score順)": surge_candidates,
                 "約定回数順(Score順)": tick_candidates,
             }
             if holding_candidates:
