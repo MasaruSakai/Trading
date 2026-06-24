@@ -435,25 +435,13 @@ def _print_candidates(candidates, top_n, source, total, title="kabu board 代替
     if not display:
         print("    表示できる銘柄なし")
         return
-    hdr = (
-        f"    {'Code':<8} {'Name':<18} {'Score':>8} {'基礎':>8}"
-        f" {'VWAP乖離':>10} {'板圧力':>10} {'成行偏':>8} {'成行残':>10}"
-        f" {'売買代金':>16} {'急増率':>9} {'Price':>10}"
-    )
+    hdr = f"    {'Code':<8} {'Name':<24} {'Score':>8} {'Price':>12}"
     print(hdr)
-    print("    " + "-" * 128)
+    print("    " + "-" * 56)
     for r in display:
-        name = (r["name"] or "")[:18]
+        name = (r["name"] or "")[:24]
         print(
-            f"    {r['code']:<8} {name:<18} {r['score']:>8.3f}"
-            f" {r.get('base_score', r.get('score', 0.0)):>8.3f}"
-            f" {r.get('vwap_dev', 0.0) * 100:>9.2f}%"
-            f" {r['book_pressure']:>10.3f}"
-            f" {r['market_pressure']:>8.3f}"
-            f" {r.get('market_order_qty', 0.0):>10,.0f}"
-            f" {r['turnover']:>16,.0f}"
-            f" {r.get('rapid_payment_pct', 0.0):>8.1f}%"
-            f" {r['price']:>10,.1f}"
+            f"    {r['code']:<8} {name:<24} {r['score']:>8.3f} {r['price']:>12,.1f}"
         )
 
 

@@ -130,8 +130,6 @@ PAGE = """<!doctype html>
   button.us-holdings:active { background: #58a6ff; }
   button.jp-holdings { background: #2ea043; }
   button.jp-holdings:active { background: #56d364; }
-  button.jp-kabu { background: #bf8700; }
-  button.jp-kabu:active { background: #d29922; }
   button:disabled { background: #30363d !important; color: #8b949e; cursor: not-allowed; }
   /* 改善版エリア(実験中) */
   .variants { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -234,14 +232,6 @@ PAGE = """<!doctype html>
     <button class="runbtn jp-holdings" data-market="jp_holdings">日本保有のみ</button>
   </div>
 </section>
-<!--
-<section>
-  <div class="sec-label">kabuステーションAPI 代替版</div>
-  <div class="btns">
-    <button class="runbtn jp-kabu" data-market="jp_kabu">日本市場 kabu ETF代替</button>
-  </div>
-</section>
--->
 
 <div class="status">
   <span id="dot" class="dot"></span><span id="msg">待機中</span>
@@ -258,8 +248,7 @@ const LABEL = {
   us: '米国市場',
   jp: '日本市場',
   us_holdings: '米国保有のみ',
-  jp_holdings: '日本保有のみ',
-  jp_kabu: '日本市場 kabu ETF代替'
+  jp_holdings: '日本保有のみ'
 };
 let poll = null;
 
@@ -324,6 +313,196 @@ setInterval(() => { if (!poll) refresh(); }, 5000);
 </html>
 """
 
+
+KABU_PAGE = """<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>kabu Station ETF Analysis</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+         background: #0d1117; color: #e6edf3; padding: env(safe-area-inset-top) 16px 32px; }
+  header { padding: 20px 0 12px; display: flex; justify-content: space-between; align-items: center; }
+  .title-group h1 { font-size: 20px; margin: 0; }
+  .title-group .sub { color: #8b949e; font-size: 13px; margin-top: 4px; }
+  .back-link { font-size: 14px; color: #58a6ff; text-decoration: none; font-weight: 600; padding: 6px 10px; border-radius: 8px; background: #21262d; }
+  .back-link:active { background: #30363d; }
+  section { margin: 18px 0; }
+  .sec-label { font-size: 12px; font-weight: 700; color: #8b949e;
+               text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .btns { display: flex; gap: 12px; }
+  button { flex: 1; padding: 18px 12px; font-size: 17px; font-weight: 700;
+           border: none; border-radius: 14px; color: #fff;
+           cursor: pointer; transition: background .15s; }
+  button.jp-kabu { background: #bf8700; }
+  button.jp-kabu:active { background: #d29922; }
+  button:disabled { background: #30363d !important; color: #8b949e; cursor: not-allowed; }
+  .status { display: flex; align-items: center; gap: 8px; }
+  .refresh { flex: none; margin-left: auto; padding: 8px 14px; font-size: 13px;
+             font-weight: 600; border-radius: 10px; background: #21262d; color: #c9d1d9; }
+  .refresh:active { background: #30363d; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 14px;
+            margin: 8px 0; min-height: 22px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #8b949e; flex: none; }
+  .dot.run { background: #d29922; animation: pulse 1s infinite; }
+  .dot.ok  { background: #238636; }
+  .dot.err { background: #da3633; }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  pre { background: #010409; border: 1px solid #30363d; border-radius: 12px;
+        padding: 14px; font-size: 12px; line-height: 1.5; overflow-x: auto;
+        white-space: pre; min-height: 200px; max-height: 65vh; overflow-y: auto;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  @media (max-width: 480px) {
+    html, body {
+      height: 100dvh;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      padding: env(safe-area-inset-top) 6px max(8px, env(safe-area-inset-bottom) - 16px);
+    }
+    header {
+      padding: 8px 0 4px;
+    }
+    h1 {
+      font-size: 18px;
+    }
+    .sub {
+      font-size: 11px;
+      margin-top: 2px;
+    }
+    section {
+      margin: 6px 0;
+    }
+    .sec-label {
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+    .btns {
+      gap: 8px;
+    }
+    button {
+      padding: 12px 8px;
+      font-size: 14px;
+      border-radius: 10px;
+    }
+    .status {
+      margin: 6px 0;
+      font-size: 12px;
+      min-height: 18px;
+    }
+    .refresh {
+      padding: 6px 10px;
+      font-size: 11px;
+      border-radius: 8px;
+    }
+    pre {
+      flex: 1;
+      margin: 0;
+      min-height: 0;
+      max-height: none;
+      font-size: 11px;
+      padding: 6px;
+      border-radius: 8px;
+    }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="title-group">
+    <h1>📈 kabu ETF代替分析</h1>
+    <div class="sub">kabuステーションAPI 経由で板圧力・需給分析を行います</div>
+  </div>
+  <a href="/" class="back-link">← メイン分析</a>
+</header>
+<section>
+  <div class="sec-label">代替スキャン</div>
+  <div class="btns">
+    <button class="runbtn jp-kabu" data-market="jp_kabu">日本市場 kabu ETF代替</button>
+  </div>
+</section>
+
+<div class="status">
+  <span id="dot" class="dot"></span><span id="msg">待機中</span>
+  <button id="refresh" class="refresh">🔄 更新</button>
+</div>
+<pre id="log">（ここに実行ログが表示されます）</pre>
+
+<script>
+const runbtns = [...document.querySelectorAll('.runbtn')];
+const dot = document.getElementById('dot');
+const msg = document.getElementById('msg');
+const log = document.getElementById('log');
+const LABEL = {
+  jp_kabu: '日本市場 kabu ETF代替'
+};
+let poll = null;
+
+function setBusy(busy) {
+  runbtns.forEach(b => b.disabled = busy);
+}
+
+function render(s) {
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 100;
+  const isRunning = s.running;
+  log.textContent = s.lines.length ? s.lines.join('\\n') : '（出力なし）';
+  if (isRunning || atBottom) {
+    setTimeout(() => {
+      log.scrollTop = log.scrollHeight;
+    }, 50);
+  }
+  const name = LABEL[s.market] || '';
+  if (s.running) {
+    setBusy(true);
+    dot.className = 'dot run'; msg.textContent = name + ' 分析中…';
+  } else {
+    setBusy(false);
+    if (s.returncode === 0) { dot.className = 'dot ok'; msg.textContent = name + ' 完了'; }
+    else if (s.returncode === null) { dot.className = 'dot'; msg.textContent = '待機中'; }
+    else { dot.className = 'dot err'; msg.textContent = name + ' 失敗 (code ' + s.returncode + ')'; }
+    if (poll) { clearInterval(poll); poll = null; }
+  }
+}
+
+function tsPath(path) {
+  return path + (path.includes('?') ? '&' : '?') + 't=' + Date.now();
+}
+
+async function refresh() {
+  try { render(await (await fetch(tsPath('/status'), { cache: 'no-store' })).json()); }
+  catch (e) { msg.textContent = '接続エラー'; }
+}
+
+function manualRefresh() {
+  const btn = document.getElementById('refresh');
+  btn.disabled = true;
+  btn.textContent = '再読み込み…';
+  window.location.replace(tsPath('/kabu'));
+}
+
+async function run(market) {
+  setBusy(true);
+  await fetch(tsPath('/run?market=' + encodeURIComponent(market)), { method: 'POST', cache: 'no-store' });
+  if (!poll) poll = setInterval(refresh, 1000);
+  refresh();
+}
+
+runbtns.forEach(b => b.onclick = () => run(b.dataset.market));
+document.getElementById('refresh').onclick = manualRefresh;
+
+refresh();
+setInterval(() => { if (!poll) refresh(); }, 5000);
+</script>
+</body>
+</html>
+"""
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype='text/html; charset=utf-8'):
         data = body.encode('utf-8') if isinstance(body, str) else body
@@ -340,6 +519,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == '/' or path.startswith('/index'):
             self._send(200, PAGE)
+        elif path == '/kabu':
+            self._send(200, KABU_PAGE)
 
         elif path == '/latest':
             # logs内の最新の分析ログ(launchd等は除外)を返す
