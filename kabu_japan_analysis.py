@@ -321,6 +321,7 @@ def ranking_to_candidate(symbol, row, source_note="ranking"):
         "turnover_rank": row.get("_TurnoverRank"),
         "turnover_surge_rank": row.get("_TurnoverSurgeRank"),
         "source": source_note,
+        "is_valid_universe": False,
     }
 
 
@@ -362,6 +363,7 @@ def fetch_board_candidate(client, symbol, exchange=1, retries=2):
         "big_net": row["book_pressure_raw"],
         "week_big": row["kabu_pressure_score"],
         "big_med5": row["kabu_pressure_score"],
+        "is_valid_universe": metrics.get("is_valid_universe", False),
     }
 
 
@@ -408,6 +410,7 @@ def position_to_candidate(symbol, pos, error):
         "week_big": 0.0,
         "big_med5": 0.0,
         "source": f"position fallback: {error}",
+        "is_valid_universe": False,
     }
 
 
@@ -628,13 +631,10 @@ def main(args):
     surge_candidates = [
         candidate_by_symbol[s]
         for s in surge_symbols
-        if s in candidate_by_symbol and _num(candidate_by_symbol[s].get("score")) != 0
+        if s in candidate_by_symbol and candidate_by_symbol[s].get("is_valid_universe") is True
     ]
     standard_candidates.sort(key=lambda r: r.get("ranking_turnover") or r.get("turnover", 0.0), reverse=True)
-    surge_candidates.sort(
-        key=lambda r: (r.get("score", 0.0), r.get("rapid_payment_pct", 0.0)),
-        reverse=True,
-    )
+    surge_candidates.sort(key=lambda r: r.get("score", -999.0), reverse=True)
     holding_candidates.sort(key=lambda r: (r["score"], r.get("profit_loss_rate", 0.0)), reverse=True)
     sell_watch = []
     for row in holding_candidates:
