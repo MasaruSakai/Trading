@@ -600,6 +600,8 @@ def main(args):
     holding_candidates = []
     errors = []
     try:
+        # 古い登録をまずクリアする
+        client.unregister_all()
         register_symbols = [(s, args.exchange) for s in board_symbols]
         client.register(register_symbols)
         print(f"         kabu Station API に {len(register_symbols)} 銘柄を登録しました。")
