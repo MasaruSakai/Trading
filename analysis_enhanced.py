@@ -52,9 +52,9 @@ from analysis_common import get_distribution, get_big_median
 OPEND_HOST, OPEND_PORT = '127.0.0.1', 11111
 CALL_INTERVAL = 1.05
 SNAPSHOT_BATCH = 200
-OVERHEAT_THRESHOLD_PCT = 1.0
-OVERHEAT_FACTOR = 2.5
-OVERHEAT_CAP = 15.0
+# OVERHEAT_THRESHOLD_PCT = 1.0
+# OVERHEAT_FACTOR = 2.5
+# OVERHEAT_CAP = 15.0
 
 GDRIVE_LOG_DIR = {
     'us': '/Users/masaru/Library/CloudStorage/GoogleDrive-sbrmsj@gmail.com/マイドライブ/AssetManagement/米国logs',
@@ -242,8 +242,7 @@ def _get_us_market_session():
 
 
 def _overheat_penalty(today_change_pct):
-    over = max(abs(today_change_pct) - OVERHEAT_THRESHOLD_PCT, 0.0)
-    return min(OVERHEAT_FACTOR * math.sqrt(over), OVERHEAT_CAP)
+    return abs(today_change_pct)
 
 
 def _copy_to_gdrive(log_path, market):
