@@ -204,6 +204,8 @@ def _merge_ranking_row(base, row, ranking_type):
 def _ranking_sort_value(row, sort_by):
     if sort_by == "rapid_payment_pct":
         return _num(row.get("RapidPaymentPercentage"))
+    if sort_by == "tick_count":
+        return _num(row.get("TickCount"))
     return _num(row.get("Turnover"))
 
 
@@ -548,35 +550,49 @@ def main(args):
             etf_only=args.etf_only,
             sort_by="rapid_payment_pct",
         )
-        if not standard_symbols and not surge_symbols:
+        tick_symbols, tick_ranking = fetch_ranked_symbols(
+            client,
+            args.universe_size,
+            RANKING_TYPE_TICK_COUNT,
+            args.exchange_division,
+            etf_only=args.etf_only,
+            sort_by="tick_count",
+        )
+        if not standard_symbols and not surge_symbols and not tick_symbols:
             raise KabuApiError("ranking returned no symbols")
         filter_label = ", ETF/ETN only" if args.etf_only else ""
-        standard_source = f"ranking Type=4 売買代金順{filter_label}"
+        standard_source = f"ranking Type=4 売買代金順{filter_label}, sorted by Score"
         surge_source = f"ranking Type=7 売買代金急増候補{filter_label}, sorted by Score"
-        ranking_by_symbol = _merge_ranking_maps(standard_ranking, surge_ranking)
+        tick_source = f"ranking Type=5 約定回数順{filter_label}, sorted by Score"
+        ranking_by_symbol = _merge_ranking_maps(standard_ranking, surge_ranking, tick_ranking)
     except Exception as e:
         if args.etf_only:
             standard_source = f"fallback ETF list (ranking unavailable: {e})"
             surge_source = standard_source
+            tick_source = standard_source
             standard_symbols = FALLBACK_ETF_SYMBOLS[: args.universe_size]
             surge_symbols = list(standard_symbols)
+            tick_symbols = list(standard_symbols)
             ranking_by_symbol = {s: {"Symbol": s, "SymbolName": "", "_RankingTypes": []} for s in standard_symbols}
         else:
             standard_source = f"fallback liquid list (ranking unavailable: {e})"
             surge_source = standard_source
+            tick_source = standard_source
             standard_symbols = FALLBACK_SYMBOLS[: args.universe_size]
             surge_symbols = list(standard_symbols)
+            tick_symbols = list(standard_symbols)
             ranking_by_symbol = {s: {"Symbol": s, "SymbolName": "", "_RankingTypes": []} for s in standard_symbols}
 
-    symbols = list(dict.fromkeys(standard_symbols + surge_symbols))
+    symbols = list(dict.fromkeys(standard_symbols + surge_symbols + tick_symbols))
     holding_symbols = list(positions)
     extra_holding_symbols = [s for s in holding_symbols if s not in symbols]
     board_symbols = list(dict.fromkeys(holding_symbols + symbols[: max(0, args.board_limit)]))
     board_symbols = board_symbols[:40]
 
-    print(f"  [1/2] universe取得: 標準{len(standard_symbols)}銘柄 / 改善{len(surge_symbols)}銘柄")
+    print(f"  [1/2] universe取得: 標準{len(standard_symbols)}銘柄 / 改善{len(surge_symbols)}銘柄 / 約定{len(tick_symbols)}銘柄")
     print(f"         標準: {standard_source}")
     print(f"         改善: {surge_source}")
+    print(f"         約定: {tick_source}")
     if extra_holding_symbols:
         print(f"         保有銘柄を追加分析: {len(extra_holding_symbols)}銘柄")
     print(f"  [2/2] board取得・スコアリング中... {len(board_symbols)}銘柄 / workers={args.workers}", flush=True)
@@ -638,8 +654,14 @@ def main(args):
         for s in surge_symbols
         if s in candidate_by_symbol
     ]
-    standard_candidates.sort(key=lambda r: r.get("ranking_turnover") or r.get("turnover", 0.0), reverse=True)
+    tick_candidates = [
+        candidate_by_symbol[s]
+        for s in tick_symbols
+        if s in candidate_by_symbol
+    ]
+    standard_candidates.sort(key=lambda r: r.get("score", -999.0), reverse=True)
     surge_candidates.sort(key=lambda r: r.get("score", -999.0), reverse=True)
+    tick_candidates.sort(key=lambda r: r.get("score", -999.0), reverse=True)
     holding_candidates.sort(key=lambda r: (r["score"], r.get("profit_loss_rate", 0.0)), reverse=True)
     sell_watch = []
     for row in holding_candidates:
@@ -652,7 +674,8 @@ def main(args):
     elapsed = (datetime.now() - t0).total_seconds()
     print(
         f"         完了: ETF標準{len(standard_candidates)}銘柄 / "
-        f"ETF改善{len(surge_candidates)}銘柄 / 保有{len(holding_candidates)}銘柄 / エラー{len(errors)}件"
+        f"ETF改善{len(surge_candidates)}銘柄 / ETF約定{len(tick_candidates)}銘柄 / "
+        f"保有{len(holding_candidates)}銘柄 / エラー{len(errors)}件"
     )
     if errors and args.show_errors:
         for symbol, err in errors[:20]:
@@ -667,7 +690,7 @@ def main(args):
         args.top,
         standard_source,
         len(standard_symbols),
-        title="売買代金順",
+        title="売買代金順（Score順）",
     )
     _print_candidates(
         surge_candidates,
@@ -675,6 +698,13 @@ def main(args):
         surge_source,
         len(surge_symbols),
         title="改善版（Score順）",
+    )
+    _print_candidates(
+        tick_candidates,
+        args.top,
+        tick_source,
+        len(tick_symbols),
+        title="約定回数順（Score順）",
     )
 
     if not args.no_signals:
@@ -684,6 +714,7 @@ def main(args):
             groups = {
                 "売買代金順": standard_candidates,
                 "改善版(Score順)": surge_candidates,
+                "約定回数順(Score順)": tick_candidates,
             }
             if holding_candidates:
                 groups["保有銘柄"] = holding_candidates
