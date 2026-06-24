@@ -38,7 +38,7 @@ from kabu_client import (  # noqa: E402
 
 TOP_N_DEFAULT = 20
 UNIVERSE_SIZE_DEFAULT = 100
-BOARD_LIMIT_DEFAULT = 100
+BOARD_LIMIT_DEFAULT = 35
 NUM_WORKERS_DEFAULT = 1
 CALL_INTERVAL_DEFAULT = 1.1
 RETRY_WAIT_SECONDS = 3.0
@@ -584,6 +584,7 @@ def main(args):
     holding_symbols = list(positions)
     extra_holding_symbols = [s for s in holding_symbols if s not in symbols]
     board_symbols = list(dict.fromkeys(holding_symbols + symbols[: max(0, args.board_limit)]))
+    board_symbols = board_symbols[:40]
 
     print(f"  [1/2] universe取得: 標準{len(standard_symbols)}銘柄 / 改善{len(surge_symbols)}銘柄")
     print(f"         標準: {standard_source}")
@@ -598,6 +599,13 @@ def main(args):
     }
     holding_candidates = []
     errors = []
+    try:
+        register_symbols = [(s, args.exchange) for s in board_symbols]
+        client.register(register_symbols)
+        print(f"         kabu Station API に {len(register_symbols)} 銘柄を登録しました。")
+    except Exception as e:
+        print(f"         [WARNING] kabu Station API への銘柄登録に失敗しました: {e}")
+
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = {
             executor.submit(
@@ -627,6 +635,12 @@ def main(args):
                         positions[symbol],
                     ))
             time.sleep(args.interval)
+
+    try:
+        client.unregister_all()
+        print("         kabu Station API の登録を全解除しました。")
+    except Exception as e:
+        print(f"         [WARNING] kabu Station API の登録解除に失敗しました: {e}")
 
     standard_candidates = [candidate_by_symbol[s] for s in standard_symbols if s in candidate_by_symbol]
     surge_candidates = [
