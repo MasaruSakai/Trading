@@ -379,9 +379,11 @@ def _print_sell_watch(cands, total, show_bear_etf=True):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main(market, top_n=5, num_workers=4, show_standard_reference=True,
-         holdings_only=False):
+         holdings_only=False, slim=False):
     cfg = MARKET_CFG[market]
     t0 = datetime.now()
+    if slim:
+        show_standard_reference = False
     mode_label = '保有のみ' if holdings_only else '通常'
     print(f"\n{'='*78}")
     print(f"  改善版 資金分析  {cfg['label']}  {mode_label}  {t0.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -727,7 +729,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     if '保有銘柄' in groups:
         _separator('保有銘柄（改善版: 保有継続/売却判断）')
         c = group_cands.get('保有銘柄', [])
-        _print_group('保有銘柄', c, top_n=None,
+        _print_group('保有銘柄', c, top_n=5 if slim else None,
                      total=len(groups['保有銘柄']),
                      show_bear_etf=(market == 'us'),
                      show_change_pct=holdings_only)
@@ -747,7 +749,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                 c = [r for r in c if r['code'] not in holding_codes]
                 total = sum(1 for x in groups[g] if is_etf(x) and x not in holding_codes) \
                     if etf_only else len([x for x in groups[g] if x not in holding_codes])
-                _print_group_enhanced2(g, c, top_n=top_n, total=total, show_bear_etf=False)
+                _print_group_enhanced2(g, c, top_n=3 if slim else top_n, total=total, show_bear_etf=False)
         else:
             native_codes_e2 = set()
             for g in [x for x in order if x != '保有銘柄']:
@@ -756,12 +758,12 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                     c = [r for r in c if r['code'] not in holding_codes]
                     c.sort(key=lambda x: x['enhanced2_score'], reverse=True)
                     native_codes_e2.update(x['code'] for x in c)
-                    _print_group_enhanced2(g, c, top_n=top_n,
+                    _print_group_enhanced2(g, c, top_n=3 if slim else top_n,
                                            total=len([x for x in groups[g] if x not in holding_codes]))
                 else:
                     c = build_enhanced2(groups[g], etf=False)
                     c = [r for r in c if r['code'] not in holding_codes]
-                    _print_group_enhanced2(g, c, top_n=top_n,
+                    _print_group_enhanced2(g, c, top_n=3 if slim else top_n,
                                            total=len([x for x in groups[g]
                                                       if not is_etf(x) and x not in holding_codes]))
             etf_pass_e2 = sorted([v for v in pass_map.values()
@@ -769,7 +771,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                                   and v['code'] not in native_codes_e2
                                   and v['code'] not in holding_codes],
                                  key=lambda x: x['enhanced2_score'], reverse=True)
-            _print_group_enhanced2('ETF(参考・分散用)', etf_pass_e2, top_n=None,
+            _print_group_enhanced2('ETF(参考・分散用)', etf_pass_e2, top_n=5 if slim else None,
                                    total=sum(1 for c in all_codes
                                              if is_etf(c)
                                              and c not in native_codes_e2
@@ -857,6 +859,8 @@ if __name__ == '__main__':
                     help='参考の標準版条件結果を下部に表示しない')
     ap.add_argument('--holdings-only', action='store_true',
                     help='保有銘柄のみを分析し、signals.csv には追記しない')
+    ap.add_argument('--slim', action='store_true',
+                    help='Minimize console output to save tokens')
     args = ap.parse_args()
 
     if args.market == 'us' and args.market_window and not _check_us_market_window():
@@ -879,7 +883,8 @@ if __name__ == '__main__':
     try:
         main(args.market, top_n=args.top, num_workers=args.workers,
              show_standard_reference=not args.hide_standard_reference,
-             holdings_only=args.holdings_only)
+             holdings_only=args.holdings_only,
+             slim=args.slim)
         lf.flush()
         _copy_to_gdrive(log_path, args.market)
     finally:
