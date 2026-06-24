@@ -576,7 +576,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         d, f = r['dist'], r.get('flow') or {}
         is_holding = c in holding_codes
         if not is_holding:
-            if not (d['ok'] and f.get('ok')):
+            if not f.get('ok'):
                 continue
         info = snap_info.get(c, {})
         last, avg_price, tov = info.get('last', 0), info.get('avg_price', 0), info.get('turnover', 0)
