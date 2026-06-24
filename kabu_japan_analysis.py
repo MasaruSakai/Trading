@@ -271,9 +271,10 @@ def attach_ranking(row, ranking_row):
     out["ranking_turnover"] = ranked_turnover
     out["base_score"] = base_score
     if rapid_payment_pct > 0:
-        out["score"] = base_score * (rapid_payment_pct / 100.0)
-        out["week_big"] = out["score"]
-        out["big_med5"] = out["score"]
+        # スコアの急増率偏重を防ぐため、乗算処理を廃止し純粋な板スコアを維持する
+        out["score"] = base_score
+        out["week_big"] = base_score
+        out["big_med5"] = base_score
     out.update({
         "change_pct": _num(ranking_row.get("ChangePercentage")),
         "rapid_payment_pct": rapid_payment_pct,
