@@ -149,6 +149,9 @@ PAGE = """<!doctype html>
   .dot.err { background: #da3633; }
   @keyframes pulse { 50% { opacity: .3; } }
 
+  .back-link { font-size: 14px; color: #58a6ff; text-decoration: none; font-weight: 600; padding: 6px 10px; border-radius: 8px; background: #21262d; }
+  .back-link:active { background: #30363d; }
+
   pre { background: #010409; border: 1px solid #30363d; border-radius: 12px;
         padding: 14px; font-size: 12px; line-height: 1.5; overflow-x: auto;
         white-space: pre; min-height: 200px; max-height: 65vh; overflow-y: auto;
@@ -215,6 +218,7 @@ PAGE = """<!doctype html>
 <header>
   <div style="display: flex; justify-content: space-between; align-items: center;">
     <h1>📈 Capital Flow Analysis</h1>
+    <a href="/kabu" class="back-link">kabu分析 →</a>
   </div>
   <div class="sub">食込率 + 連続性 + 時間外確認 + ETF分離</div>
 </header>
