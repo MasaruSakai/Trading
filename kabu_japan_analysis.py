@@ -636,7 +636,7 @@ def main(args):
     surge_candidates = [
         candidate_by_symbol[s]
         for s in surge_symbols
-        if s in candidate_by_symbol and candidate_by_symbol[s].get("is_valid_universe") is True
+        if s in candidate_by_symbol
     ]
     standard_candidates.sort(key=lambda r: r.get("ranking_turnover") or r.get("turnover", 0.0), reverse=True)
     surge_candidates.sort(key=lambda r: r.get("score", -999.0), reverse=True)
