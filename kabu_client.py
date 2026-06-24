@@ -6,6 +6,7 @@ depending on moomoo capital_distribution/capital_flow.
 """
 import csv
 import json
+import math
 import os
 from datetime import datetime
 from urllib import error, request
@@ -133,13 +134,54 @@ def score_board(board, median_trading_value=None, tick_up_ratio=None):
     buy_book = _book_qty(board, "Buy")
     sell_book = _book_qty(board, "Sell")
 
-    vwap_dev = current / vwap - 1.0 if current > 0 and vwap > 0 else 0.0
+    # WOBI (Exponentially Weighted OBI)
+    weighted_buy = 0.0
+    weighted_sell = 0.0
+    for i in range(1, 11):
+        weight = 0.5 ** (i - 1)
+        buy_level = board.get(f"Buy{i}") or {}
+        sell_level = board.get(f"Sell{i}") or {}
+        weighted_buy += _num(buy_level.get("Qty")) * weight
+        weighted_sell += _num(sell_level.get("Qty")) * weight
+
+    weighted_buy += _num(board.get("UnderBuyQty")) * 0.001
+    weighted_sell += _num(board.get("OverSellQty")) * 0.001
+
+    if weighted_buy + weighted_sell > 0:
+        wobi = (weighted_buy - weighted_sell) / (weighted_buy + weighted_sell)
+    else:
+        wobi = 0.0
+
+    # MarketOrder Imbalance (Market_Pressure)
     market_pressure_raw = market_buy - market_sell
-    market_pressure = _bounded(market_pressure_raw, market_buy + market_sell)
-    # 成行は約定フローではなく、板に残る成行注文の参考値として保持する。
-    market_order_component = _bounded((market_sell - market_buy) * 0.5, market_buy + market_sell)
-    book_pressure_raw = buy_book - sell_book
-    book_pressure = _bounded(book_pressure_raw, buy_book + sell_book)
+    if market_buy + market_sell > 0:
+        market_pressure = market_pressure_raw / (market_buy + market_sell)
+    else:
+        market_pressure = 0.0
+
+    # VWAP component scaled using math.tanh(50 * vwap_dev)
+    vwap_dev = current / vwap - 1.0 if current > 0 and vwap > 0 else 0.0
+    vwap_component = math.tanh(50 * vwap_dev)
+
+    # Continuous score
+    score = 0.5 * wobi + 0.2 * market_pressure + 0.3 * vwap_component
+
+    # Liquidity & Universe Filter
+    buy1 = board.get("Buy1") or {}
+    sell1 = board.get("Sell1") or {}
+    bid_price1 = _num(buy1.get("Price"))
+    ask_price1 = _num(sell1.get("Price"))
+    bid_qty1 = _num(buy1.get("Qty"))
+    ask_qty1 = _num(sell1.get("Qty"))
+    mid_price = (ask_price1 + bid_price1) / 2.0
+
+    is_valid_universe = False
+    if current >= 200 and trading_value >= 100_000_000:
+        if mid_price > 0:
+            relative_spread = (ask_price1 - bid_price1) / mid_price
+            market_depth = (ask_qty1 + bid_qty1) / 2.0
+            if relative_spread <= 0.005 and market_depth >= 500:
+                is_valid_universe = True
 
     if median_trading_value and median_trading_value > 0:
         trading_value_surge = max(-1.0, min(1.0, trading_value / median_trading_value - 1.0))
@@ -150,33 +192,21 @@ def score_board(board, median_trading_value=None, tick_up_ratio=None):
     if tick_up_ratio is not None:
         tick_component = max(-1.0, min(1.0, (float(tick_up_ratio) - 0.5) * 2.0))
 
-    if current <= 0 or vwap <= 0 or buy_book + sell_book <= 0:
-        vwap_board_component = 0.0
-    elif vwap_dev >= 0 and book_pressure >= 0:
-        vwap_board_component = 0.5
-    elif vwap_dev < 0 and book_pressure >= 0:
-        vwap_board_component = 0.1
-    elif vwap_dev >= 0 and book_pressure < 0:
-        vwap_board_component = -0.1
-    else:
-        vwap_board_component = -0.5
-
-    score = vwap_board_component
-
     return {
         "vwap_dev": vwap_dev,
-        "vwap_board_component": vwap_board_component,
+        "vwap_board_component": vwap_component,
         "market_order_pressure": market_pressure,
         "market_order_pressure_raw": market_pressure_raw,
-        "market_order_component": market_order_component,
+        "market_order_component": market_pressure,
         "market_order_qty": market_buy + market_sell,
-        "book_pressure": book_pressure,
-        "book_pressure_raw": book_pressure_raw,
+        "book_pressure": wobi,
+        "book_pressure_raw": weighted_buy - weighted_sell,
         "buy_book_qty": buy_book,
         "sell_book_qty": sell_book,
         "trading_value_surge": trading_value_surge,
         "tick_component": tick_component,
         "kabu_pressure_score": score,
+        "is_valid_universe": is_valid_universe,
     }
 
 
@@ -204,6 +234,7 @@ CSV_FIELDS = [
     "trading_value_surge",
     "tick_component",
     "kabu_pressure_score",
+    "is_valid_universe",
 ]
 
 
@@ -233,6 +264,7 @@ def board_to_row(board, metrics=None, logged_at=None):
         "trading_value_surge": metrics["trading_value_surge"],
         "tick_component": metrics["tick_component"],
         "kabu_pressure_score": metrics["kabu_pressure_score"],
+        "is_valid_universe": metrics.get("is_valid_universe", False),
     }
 
 
