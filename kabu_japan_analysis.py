@@ -38,7 +38,7 @@ from kabu_client import (  # noqa: E402
 
 TOP_N_DEFAULT = 20
 UNIVERSE_SIZE_DEFAULT = 100
-BOARD_LIMIT_DEFAULT = 12
+BOARD_LIMIT_DEFAULT = 100
 NUM_WORKERS_DEFAULT = 1
 CALL_INTERVAL_DEFAULT = 1.1
 RETRY_WAIT_SECONDS = 3.0
@@ -711,7 +711,7 @@ if __name__ == "__main__":
     parser.add_argument("--exchange", type=int, default=1)
     parser.add_argument("--ranking-type", type=int, default=RANKING_TYPE_TURNOVER)
     parser.add_argument("--exchange-division", default="ALL")
-    parser.add_argument("--etf-only", action="store_true", help="ランキング候補をETF/ETNだけに絞る")
+    parser.add_argument("--etf-only", action=argparse.BooleanOptionalAction, default=True, help="ランキング候補をETF/ETNだけに絞る")
     parser.add_argument("--include-holdings", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--no-signals", action="store_true")
     parser.add_argument("--show-errors", action="store_true")
