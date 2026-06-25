@@ -80,6 +80,60 @@ def get_today_vwap(quote_ctx, code):
     vwap = snap['avg_price'].iloc[0]
     return float(vwap)
 
+def cancel_all_active_stop_orders(trd_ctx, acc_id):
+    """Cancels all active sell STOP orders for the account, regardless of holdings.
+    """
+    print("\n--- Clearing all existing active sell STOP orders ---")
+    ret, data = trd_ctx.order_list_query(
+        status_filter_list=[
+            OrderStatus.WAITING_SUBMIT,
+            OrderStatus.SUBMITTING,
+            OrderStatus.SUBMITTED
+        ],
+        trd_env=TrdEnv.REAL,
+        acc_id=acc_id,
+        refresh_cache=True
+    )
+    if ret != RET_OK:
+        print(f"Failed to query active orders: {data}")
+        return
+        
+    if data.empty:
+        print("No active orders found to clear.")
+        return
+        
+    # Filter for SELL side and STOP order type
+    target_orders = data[
+        (data['trd_side'].astype(str) == 'SELL') & 
+        (data['order_type'].astype(str) == 'STOP')
+    ]
+    
+    if target_orders.empty:
+        print("No active sell STOP orders found to clear.")
+        return
+        
+    print(f"Found {len(target_orders)} active sell STOP order(s) to cancel.")
+    for idx, row in target_orders.iterrows():
+        order_id = row['order_id']
+        code = row['code']
+        orig_qty = int(row['qty'])
+        orig_price = float(row['price'])
+        
+        print(f"Canceling order {order_id} for {code}...")
+        ret_cancel, data_cancel = trd_ctx.modify_order(
+            modify_order_op=ModifyOrderOp.CANCEL,
+            order_id=order_id,
+            qty=orig_qty,
+            price=orig_price,
+            trd_env=TrdEnv.REAL,
+            acc_id=acc_id
+        )
+        if ret_cancel == RET_OK:
+            print(f"Successfully canceled order {order_id}.")
+        else:
+            print(f"Warning: Failed to cancel order {order_id}: {data_cancel}")
+        time.sleep(0.5)
+
 def main():
     print("==================================================")
     print(f"Starting automatic Stop-Loss update at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -96,8 +150,11 @@ def main():
     quote_ctx = OpenQuoteContext(host='127.0.0.1', port=11111)
     
     try:
+        # 0. Cancel all active stop orders first
+        cancel_all_active_stop_orders(trd_ctx, ACC_ID)
+        
         # 1. Fetch current US positions
-        print("Querying current US positions...")
+        print("\nQuerying current US positions...")
         ret, positions = trd_ctx.position_list_query(
             trd_env=TrdEnv.REAL, 
             acc_id=ACC_ID, 
