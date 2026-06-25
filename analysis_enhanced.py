@@ -37,7 +37,8 @@
   python3 analysis_enhanced.py --market us --top 6 --workers 4
 """
 import sys, time, argparse, os, re, math
-from datetime import datetime
+from datetime import datetime, timedelta
+import pandas as pd
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
