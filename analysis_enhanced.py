@@ -528,8 +528,10 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                     'turnover': tov, 'last': last,
                     'avg_price': _row_float(row, 'avg_price'), 'after': _row_float(row, 'after_price'),
                     'overnight': _row_float(row, 'overnight_price'), 'pre': _row_float(row, 'pre_price'),
+                    'high': _row_float(row, 'high_price'), 'low': _row_float(row, 'low_price'),
                     'today_change_pct': change,
                 }
+
         elif len(codes) == 1:
             print(f"\n    [snapshot] スキップ: {codes[0]} ({s})", end='')
         else:                                   # 分割して不良銘柄を隔離
@@ -539,7 +541,6 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
 
     for i in range(0, len(all_codes), SNAPSHOT_BATCH):
         _snap(all_codes[i:i + SNAPSHOT_BATCH])
-    q.close()
     print(f"{len(all_codes)}銘柄ユニーク / snapshot {len(snap_info)}銘柄")
 
     # Step 3: 並列で 分布(当日) + 大口5日中央値
@@ -570,10 +571,25 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         for fut in as_completed({ex.submit(_worker, s): i for i, s in enumerate(slices)}):
             results.update(fut.result())
 
-    # ハードフィルタ: 超大口&大口が売り越していない(当日 net≧0) + 大口5日中央値>0。
-    # 平均価格乖離はフィルタには使わず、参考の表示列として保持する。
+    # MTR計算のヘルパー関数
+    def _get_mtr(quote_ctx, code):
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=25)).strftime("%Y-%m-%d")
+        ret, df, _ = quote_ctx.request_history_kline(code, start=start_date, end=end_date, ktype='K_DAY', autype='qfq')
+        time.sleep(0.1) # レートリミット配慮
+        if ret == RET_OK and not df.empty:
+            tr1 = df['high'] - df['low']
+            tr2 = (df['high'] - df['last_close']).abs()
+            tr3 = (df['low'] - df['last_close']).abs()
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            return float(tr.tail(14).median())
+        return 0.0
+
+    # ハードフィルタ: 超大口&大口が売り越していない(当日 net≧0) + 大口5日中央値>0 + VWAP足切り。
     passers = []
     passers_strict = []   # 標準版フィルタ② (4/5日プラス) を通過した銘柄
+    mtr_cache = {}
+
     for c, r in results.items():
         d, f = r['dist'], r.get('flow') or {}
         is_holding = c in holding_codes
@@ -582,14 +598,36 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                 continue
         info = snap_info.get(c, {})
         last, avg_price, tov = info.get('last', 0), info.get('avg_price', 0), info.get('turnover', 0)
+        
+        # MTRの取得
+        if c not in mtr_cache:
+            try:
+                mtr_cache[c] = _get_mtr(q, c)
+            except Exception:
+                mtr_cache[c] = 0.0
+        mtr = mtr_cache[c]
+        
+        # 新規候補に対する前段のフィルタリング（VWAP足切り）
+        if not is_holding:
+            if avg_price > 0 and mtr > 0:
+                if last < avg_price - (0.5 * mtr):
+                    continue  # 足切り
+                    
         avg_price_dev = (last / avg_price - 1.0) if avg_price > 0 else None   # 表示のみ
-        passers.append((c, d, f, tov, avg_price_dev))
+        passers.append((c, d, f, tov, avg_price_dev, mtr))
         if is_holding or f.get('ok_strict'):
-            passers_strict.append((c, d, f, tov, avg_price_dev))
+            passers_strict.append((c, d, f, tov, avg_price_dev, mtr))
+
+    try:
+        q.close()
+    except Exception:
+        pass
+
     print(f"         改善版通過: {len(passers)}銘柄  /  標準版通過: {len(passers_strict)}銘柄")
 
+
     # candidate 構築
-    def make(c, d, f, tov, avg_price_dev):
+    def make(c, d, f, tov, avg_price_dev, mtr):
         big = d['big_net']
         weighted_net = d['super_net'] + big * 0.5
         sort_weighted_net = weighted_net - d['small_net'] * 0.25
@@ -598,8 +636,21 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         bear_etf_code = find_bear_etf_code(market, c, info.get('name', ''), is_target_etf)
         ext_dev, ext_sess = ext_confirm(info, market)
         enhanced1_score_pct = ((sort_weighted_net / tov) * 100.0) if tov > 0 else 0.0
-        today_change_pct = info.get('today_change_pct', 0.0)
-        overheat_penalty = _overheat_penalty(today_change_pct)
+
+        # MTRに基づく過熱減点と動意加点
+        mtr_overheat = 0.0
+        mtr_momentum = 0.0
+        if mtr > 0:
+            high = info.get('high', 0.0)
+            low = info.get('low', 0.0)
+            today_range = high - low
+            width_ratio = today_range / mtr
+            
+            # MTR過熱減点（普段の値幅の1.5倍を超えたら減点）
+            mtr_overheat = math.sqrt(max(0.0, (width_ratio - 1.5) * 5.0))
+            
+            # MTR動意加点（普段の動きに対して対数でスケーリング）
+            mtr_momentum = math.log10(max(0.1, width_ratio)) * 3.0
 
         pl_ratio = holding_pls.get(c, 0.0)
         bonus = 0.0
@@ -607,10 +658,9 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             bonus = max(pl_ratio * 0.2, 0.0)
 
         sort_ingest_ratio = (sort_weighted_net / tov) if tov > 0 else 0.0
-        vwap_component = 0.0
-        if market == 'us' and avg_price_dev is not None:
-            vwap_component = math.tanh(10.0 * avg_price_dev) * 5.0
-        enhanced2_score = enhanced1_score_pct - overheat_penalty + vwap_component
+        
+        # 改善版2スコア：大口流入比率 - MTR過熱減点 + MTR動意加点
+        enhanced2_score = enhanced1_score_pct - mtr_overheat + mtr_momentum
 
         sort_ingest_ratio += bonus / 100.0
         enhanced2_score += bonus
@@ -623,8 +673,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             'vwap_dev': round(avg_price_dev, 5) if avg_price_dev is not None else None,
             'ingest_ratio': (weighted_net / tov) if tov > 0 else 0.0,
             'sort_ingest_ratio': sort_ingest_ratio,
-            'today_change_pct': today_change_pct,
-            'overheat_penalty': overheat_penalty,
+            'today_change_pct': info.get('today_change_pct', 0.0),
+            'overheat_penalty': mtr_overheat,
             'enhanced2_score': enhanced2_score,
             'big_med5': f.get('big_med5', 0.0),
             'big_component_med5': f.get('big_component_med5', 0.0),
@@ -636,9 +686,11 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             'bear_etf_code': bear_etf_code,
             'ext_dev': ext_dev, 'ext_sess': ext_sess,
             'pl_ratio': pl_ratio,
+            'mtr': mtr,
         }
 
-    pass_map = {c: make(c, d, f, tov, vd) for c, d, f, tov, vd in passers}
+    pass_map = {c: make(c, d, f, tov, vd, mtr) for c, d, f, tov, vd, mtr in passers}
+
 
     def sell_reason(flow):
         if flow.get('sell_strict'):
@@ -782,7 +834,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
 
     if show_standard_reference:
         # ── 標準版結果(参考) ─────────────────────────────────────────────────────
-        strict_pass_map = {c: make(c, d, f, tov, vd) for c, d, f, tov, vd in passers_strict}
+        strict_pass_map = {c: make(c, d, f, tov, vd, mtr) for c, d, f, tov, vd, mtr in passers_strict}
+
 
         def build_strict(codes, etf):
             out = [strict_pass_map[c] for c in codes if c in strict_pass_map and bool(strict_pass_map[c]['is_etf']) == etf]
