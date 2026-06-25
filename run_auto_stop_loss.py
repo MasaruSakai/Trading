@@ -154,8 +154,14 @@ def main():
                     stop_price = vwap - mtr
                     case_label = "No Profit -> Stop at VWAP - MTR"
                 
-                # Round stop price to 3 decimal places (US market standard)
-                stop_price = round(stop_price, 3)
+                # Round stop price according to US market tick size specifications:
+                # $1.00 and above: 2 decimal places (cents)
+                # Below $1.00: 4 decimal places
+                if stop_price >= 1.0:
+                    stop_price = round(stop_price, 2)
+                else:
+                    stop_price = round(stop_price, 4)
+
                 
                 print(f"MTR: {mtr:.3f}, VWAP: {vwap:.3f}")
                 print(f"Decision: {case_label} | Target Stop Price: {stop_price}")
