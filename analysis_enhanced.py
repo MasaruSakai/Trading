@@ -607,7 +607,10 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             bonus = max(pl_ratio * 0.2, 0.0)
 
         sort_ingest_ratio = (sort_weighted_net / tov) if tov > 0 else 0.0
-        enhanced2_score = enhanced1_score_pct - overheat_penalty
+        vwap_component = 0.0
+        if market == 'us' and avg_price_dev is not None:
+            vwap_component = math.tanh(10.0 * avg_price_dev) * 5.0
+        enhanced2_score = enhanced1_score_pct - overheat_penalty + vwap_component
 
         sort_ingest_ratio += bonus / 100.0
         enhanced2_score += bonus
