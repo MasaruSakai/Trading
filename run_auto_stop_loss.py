@@ -263,8 +263,12 @@ def main():
                     acc_id=ACC_ID
                 )
                 
+                # Add a sleep to respect the API rate limit (Get Order list: Max 10 times per 30 seconds)
+                time.sleep(2.5)
+                
             except Exception as e:
                 print(f"Error calculating/updating stop order for {code}: {e}")
+                time.sleep(1.0)
                 continue
                 
     finally:
