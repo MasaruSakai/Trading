@@ -262,7 +262,7 @@ def main():
                 # Send the new stop order
                 payload = {
                     "Symbol": symbol,
-                    "Exchange": 1,
+                    "Exchange": 9,
                     "SecurityType": 1,
                     "Side": "1",
                     "CashMargin": 1,
