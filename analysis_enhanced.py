@@ -247,6 +247,11 @@ def _get_fred_data_with_cache(series_id, cache_dir='config/macro_cache'):
 
 def _get_naaim_index_with_cache(cache_dir='config/macro_cache'):
     import json
+    import urllib.request
+    import zipfile
+    import xml.etree.ElementTree as ET
+    from datetime import datetime, timedelta
+    
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, "NAAIM.json")
     
@@ -263,43 +268,88 @@ def _get_naaim_index_with_cache(cache_dir='config/macro_cache'):
         except Exception:
             pass
             
-    # Fetch from official website
-    url = "https://naaim.org/programs/naaim-exposure-index/"
-    try:
-        import urllib.request
-        import re
-        req = urllib.request.Request(
-            url, 
-            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as response:
-            html = response.read().decode("utf-8", errors="replace")
-            pattern = r'\[new Date\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\),\s*([\d\.-]+)\]'
-            matches = re.findall(pattern, html)
-            if matches:
-                data = []
-                for m in matches:
-                    year = int(m[0])
-                    month = int(m[1]) + 1  # JS 0-based month to 1-based
-                    day = int(m[2])
-                    val = float(m[3])
-                    date_str = f"{month:02d}/{day:02d}/{year}"
-                    data.append({"date": date_str, "value": val, "sort_key": f"{year:04d}-{month:02d}-{day:02d}"})
+    # Compute dates of the last 3 Wednesdays to find the Excel file download URL
+    today = datetime.now().date()
+    offset = (today.weekday() - 2) % 7
+    last_wed = today - timedelta(days=offset)
+    
+    download_success = False
+    temp_xlsx = os.path.join(cache_dir, "temp_naaim.xlsx")
+    
+    for i in range(3):
+        target_date = last_wed - timedelta(weeks=i)
+        year = target_date.year
+        month = target_date.month
+        day = target_date.day
+        
+        # Example: https://naaim.org/wp-content/uploads/2026/06/USE_Data-since-Inception_2026-06-24.xlsx
+        url = f"https://naaim.org/wp-content/uploads/{year}/{month:02d}/USE_Data-since-Inception_{year}-{month:02d}-{day:02d}.xlsx"
+        
+        try:
+            req = urllib.request.Request(
+                url, 
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status == 200:
+                    with open(temp_xlsx, 'wb') as fp:
+                        fp.write(response.read())
+                    download_success = True
+                    break
+        except Exception:
+            continue
+            
+    if download_success and os.path.exists(temp_xlsx):
+        try:
+            ns = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+            with zipfile.ZipFile(temp_xlsx, 'r') as z:
+                with z.open('xl/worksheets/sheet1.xml') as f:
+                    tree = ET.parse(f)
+                    root = tree.getroot()
+                    rows = root.findall(f'.//{ns}row')
+                    
+                    data = []
+                    # Skip header row[0]
+                    for row in rows[1:]:
+                        cells = row.findall(f'{ns}c')
+                        if len(cells) >= 2:
+                            v1 = cells[0].find(f'{ns}v')
+                            v2 = cells[1].find(f'{ns}v')
+                            if v1 is not None and v2 is not None:
+                                try:
+                                    serial = int(float(v1.text))
+                                    val = float(v2.text)
+                                    # Convert Excel serial date to string (1899-12-30 base)
+                                    date_obj = datetime(1899, 12, 30) + timedelta(days=serial)
+                                    date_str = date_obj.strftime("%m/%d/%Y")
+                                    sort_key = date_obj.strftime("%Y-%m-%d")
+                                    data.append({"date": date_str, "value": val, "sort_key": sort_key})
+                                except Exception:
+                                    pass
+                                    
+            if data:
                 data.sort(key=lambda x: x["sort_key"], reverse=True)
-                # Remove sort_key before saving
                 for item in data:
                     item.pop("sort_key", None)
+                
                 with open(cache_path, 'w', encoding='utf-8') as fp:
                     json.dump(data[:10], fp, ensure_ascii=False)
+                
+                try:
+                    os.remove(temp_xlsx)
+                except Exception:
+                    pass
                 return data[:10]
-    except Exception as e:
-        # Silently log warning during background runs
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, encoding='utf-8') as fp:
-                    return json.load(fp)
-            except Exception:
-                pass
+        except Exception as e:
+            print(f"  [NAAIM] Error parsing excel data: {e}")
+            
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, encoding='utf-8') as fp:
+                return json.load(fp)
+        except Exception:
+            pass
+            
     return None
 
 
