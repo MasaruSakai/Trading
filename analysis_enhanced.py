@@ -732,7 +732,6 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
 
     if market == 'us':
         macro_indicators = [
-            'US.HYG', 'US.TLT', 'US.VIX',
             'US.XLK', 'US.XLF', 'US.XLV', 'US.XLE', 'US.XLY', 'US.XLP',
             'US.XLB', 'US.XLU', 'US.XLRE', 'US.XLC', 'US.IYT'
         ]
@@ -950,64 +949,6 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     print(f"  分析結果  {cfg['label']}  ({datetime.now().strftime('%H:%M:%S')}  経過: {elapsed:.0f}秒)")
     print(f"{'='*78}")
 
-    # --- FRED Net Liquidity Calculation (Common) ---
-    net_liquidity_str = "N/A"
-    try:
-        walcl = _get_fred_data_with_cache('WALCL')
-        wdtgal = _get_fred_data_with_cache('WDTGAL')
-        rrp = _get_fred_data_with_cache('RRPONTSYD')
-        
-        # Intersection of Wednesday dates
-        wednesday_dates = []
-        for d_str in set(walcl.keys()) & set(wdtgal.keys()):
-            try:
-                d = datetime.strptime(d_str, '%Y-%m-%d').date()
-                if d.weekday() == 2: # Wednesday
-                    wednesday_dates.append(d)
-            except ValueError:
-                pass
-        wednesday_dates.sort()
-        
-        if wednesday_dates:
-            latest_wed = wednesday_dates[-1]
-            prev_wed = latest_wed - timedelta(days=7)
-            
-            def get_rrp_value(date_obj, rrp_dict):
-                d_str = date_obj.strftime('%Y-%m-%d')
-                if d_str in rrp_dict:
-                    return rrp_dict[d_str]
-                for i in range(1, 8):
-                    prev_date = date_obj - timedelta(days=i)
-                    prev_str = prev_date.strftime('%Y-%m-%d')
-                    if prev_str in rrp_dict:
-                        return rrp_dict[prev_str]
-                return None
-
-            w_latest = walcl.get(latest_wed.strftime('%Y-%m-%d'))
-            tg_latest = wdtgal.get(latest_wed.strftime('%Y-%m-%d'))
-            rrp_latest = get_rrp_value(latest_wed, rrp)
-            
-            w_prev = walcl.get(prev_wed.strftime('%Y-%m-%d'))
-            tg_prev = wdtgal.get(prev_wed.strftime('%Y-%m-%d'))
-            rrp_prev = get_rrp_value(prev_wed, rrp)
-            
-            if w_latest is not None and tg_latest is not None and rrp_latest is not None:
-                net_latest = w_latest - tg_latest - (rrp_latest * 1000.0)
-                net_latest_trillions = net_latest / 1000000.0
-                
-                if w_prev is not None and tg_prev is not None and rrp_prev is not None:
-                    net_prev = w_prev - tg_prev - (rrp_prev * 1000.0)
-                    change_billions = (net_latest - net_prev) / 1000.0
-                    net_liquidity_str = f"{net_latest_trillions:.2f} Trillion (Weekly Change: {change_billions:+.2f} Billion)"
-                else:
-                    net_liquidity_str = f"{net_latest_trillions:.2f} Trillion (Weekly Change: N/A)"
-            else:
-                net_liquidity_str = "N/A"
-        else:
-            net_liquidity_str = "N/A"
-    except Exception as e:
-        net_liquidity_str = f"Error ({e})"
-
     # --- NAAIM Exposure Index Calculation ---
     naaim_str = "N/A"
     try:
@@ -1070,44 +1011,14 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         else:
             sector_category = "流動性逼迫（本命集中・資金引き揚げ）"
 
-        # --- VIX & Risk-On ---
-        vix_info = snap_info.get('US.VIX')
-        vix_str = f"{vix_info['last']:.2f}" if vix_info and vix_info.get('last') is not None else "N/A"
-        
-        hyg = snap_info.get('US.HYG')
-        tlt = snap_info.get('US.TLT')
-        if hyg and tlt and hyg.get('last') and tlt.get('last'):
-            risk_on_ratio = hyg['last'] / tlt['last']
-            risk_on_change = (hyg.get('today_change_pct') or 0.0) - (tlt.get('today_change_pct') or 0.0)
-            risk_on_label = "資金流入傾向" if risk_on_change > 0 else "資金引き揚げ傾向"
-            sign = "+" if risk_on_change > 0 else ""
-            risk_on_str = f"{risk_on_ratio:.4f} (变化幅: {sign}{risk_on_change:.2f}%, {risk_on_label})"
-        else:
-            risk_on_str = "N/A"
-
         print("  [マクロ指標・市場流動性]")
-        print(f"    US Net Liquidity   : {net_liquidity_str}")
-        print("                        (目安: 5.8兆$前後が現在の基準値。週次数十Billion$以上の急減は株式下落を警戒)")
         print(f"    NAAIM Exposure     : {naaim_str}")
         print("                        (NAAIM上昇: 株式リスク増, 低下: ヘッジ増, 極端に高(>=80%): 買い余力低下, 極端に低(<=40%): リスク削減済)")
         print(f"    FMS Cash Level     : {fms_str}")
         print("                        (目安: 5.0%以上で底値圏・買いシグナル、4.0%以下で過熱・売りシグナル)")
         print(f"    Sector VWAP Breadth: {sector_breadth:.1f}% ({sector_category})")
-        print(f"    Risk-On Ratio      : {risk_on_str}")
-        print(f"    VIX Index          : {vix_str}")
         print(f"{'='*78}")
     else:
-        jp2516 = snap_info.get('JP.2516')
-        jp1306 = snap_info.get('JP.1306')
-        if jp2516 and jp1306 and jp2516.get('last') and jp1306.get('last'):
-            risk_on_ratio = jp2516['last'] / jp1306['last']
-            risk_on_change = (jp2516.get('today_change_pct') or 0.0) - (jp1306.get('today_change_pct') or 0.0)
-            risk_on_label = "新興物色・リスクオン" if risk_on_change > 0 else "新興売却・ディフェンシブ"
-            sign = "+" if risk_on_change > 0 else ""
-            risk_on_str = f"{risk_on_ratio:.4f} (JP.2516/JP.1306, 変化幅: {sign}{risk_on_change:.2f}%, {risk_on_label})"
-        else:
-            risk_on_str = "N/A"
-            
         non_etfs = [c for c in all_codes if not is_etf(c)]
         valid_non_etfs = [c for c in non_etfs if c in snap_info and snap_info[c].get('last') is not None and snap_info[c].get('avg_price') is not None]
         if valid_non_etfs:
@@ -1124,15 +1035,12 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             breadth_category = "流動性逼迫（本命集中・資金引き揚げ）"
 
         print("  [マクロ指標・世界流動性]")
-        print(f"    US Net Liquidity  : {net_liquidity_str}")
-        print("                       (目安: 5.8兆$前後が現在の基準値。週次数十Billion$以上の急減は株式下落を警戒)")
         print(f"    NAAIM Exposure    : {naaim_str}")
         print("                       (NAAIM上昇: 株式リスク増, 低下: ヘッジ増, 極端に高(>=80%): 買い余力低下, 極端に低(<=40%): リスク削減済)")
         print(f"    FMS Cash Level    : {fms_str}")
         print("                       (目安: 5.0%以上で底値圏・買いシグナル、4.0%以下で過熱・売りシグナル)")
         print("  [市場流動性分析]")
         print(f"    VWAP Breadth  : {vwap_breadth:.1f}% ({breadth_category})")
-        print(f"    Risk-On Ratio : {risk_on_str}")
         print(f"{'='*78}")
 
     group_cands = {}
