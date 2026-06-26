@@ -38,6 +38,7 @@
 """
 import sys, time, argparse, os, re, math
 from datetime import datetime, timedelta
+import urllib.request
 import pandas as pd
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -197,6 +198,51 @@ def ext_confirm(info, market):
         if p and p > 0:
             return round(p / last - 1.0, 5), sess
     return None, ''
+
+
+def _get_fred_data_with_cache(series_id, cache_dir='config/macro_cache'):
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, f"{series_id}.csv")
+    
+    should_download = True
+    if os.path.exists(cache_file):
+        mtime = os.path.getmtime(cache_file)
+        mtime_date = datetime.fromtimestamp(mtime).date()
+        if mtime_date == datetime.now().date():
+            should_download = False
+            
+    if should_download:
+        url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                content_csv = response.read().decode('utf-8')
+            if "DATE" in content_csv or "observation_date" in content_csv:
+                from io import StringIO
+                df = pd.read_csv(StringIO(content_csv))
+                if 'observation_date' in df.columns:
+                    df = df.rename(columns={'observation_date': 'DATE'})
+                if 'DATE' in df.columns and series_id in df.columns:
+                    df[series_id] = pd.to_numeric(df[series_id], errors='coerce')
+                    df = df.dropna(subset=[series_id])
+                    df.to_csv(cache_file, index=False)
+        except Exception as e:
+            print(f"  [FRED] Download failed for {series_id}: {e}. Fallback to cache if available.")
+            
+    if not os.path.exists(cache_file):
+        return {}
+        
+    try:
+        df = pd.read_csv(cache_file)
+        if 'observation_date' in df.columns:
+            df = df.rename(columns={'observation_date': 'DATE'})
+        if 'DATE' in df.columns and series_id in df.columns:
+            df[series_id] = pd.to_numeric(df[series_id], errors='coerce')
+            df = df.dropna(subset=[series_id])
+            return dict(zip(df['DATE'], df[series_id]))
+    except Exception as e:
+        print(f"  [FRED] Error parsing cache file for {series_id}: {e}")
+    return {}
 
 
 def _row_float(row, key):
@@ -540,7 +586,14 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             _snap(codes[:mid])
             _snap(codes[mid:])
 
-    macro_indicators = ['US.HYG', 'US.TLT'] if market == 'us' else ['JP.2516', 'JP.1306']
+    if market == 'us':
+        macro_indicators = [
+            'US.HYG', 'US.TLT', 'US.VIX',
+            'US.XLK', 'US.XLF', 'US.XLV', 'US.XLE', 'US.XLY', 'US.XLP',
+            'US.XLB', 'US.XLU', 'US.XLRE', 'US.XLC', 'US.IYT'
+        ]
+    else:
+        macro_indicators = ['JP.2516', 'JP.1306']
     snap_targets = sorted(list(set(all_codes) | set(macro_indicators)))
 
     for i in range(0, len(snap_targets), SNAPSHOT_BATCH):
@@ -740,33 +793,101 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     print(f"  分析結果  {cfg['label']}  ({datetime.now().strftime('%H:%M:%S')}  経過: {elapsed:.0f}秒)")
     print(f"{'='*78}")
 
-    # --- Market Liquidity Metrics ---
-    non_etfs = [c for c in all_codes if not is_etf(c)]
-    valid_non_etfs = [c for c in non_etfs if c in snap_info and snap_info[c].get('last') is not None and snap_info[c].get('avg_price') is not None]
-    if valid_non_etfs:
-        above_vwap = sum(1 for c in valid_non_etfs if snap_info[c]['last'] > snap_info[c]['avg_price'])
-        vwap_breadth = (above_vwap / len(valid_non_etfs)) * 100.0
-    else:
-        vwap_breadth = 0.0
-
-    if vwap_breadth >= 60.0:
-        breadth_category = "流動性潤沢（リスクオン）"
-    elif vwap_breadth >= 40.0:
-        breadth_category = "流動性平時（選択的物色）"
-    else:
-        breadth_category = "流動性逼迫（本命集中・資金引き揚げ）"
-
-    risk_on_ratio = None
-    risk_on_change = None
-    risk_on_label = None
-
     if market == 'us':
+        # --- FRED Net Liquidity Calculation ---
+        try:
+            walcl = _get_fred_data_with_cache('WALCL')
+            wdtgal = _get_fred_data_with_cache('WDTGAL')
+            rrp = _get_fred_data_with_cache('RRPONTSYD')
+            
+            # Intersection of Wednesday dates
+            wednesday_dates = []
+            for d_str in set(walcl.keys()) & set(wdtgal.keys()):
+                try:
+                    d = datetime.strptime(d_str, '%Y-%m-%d').date()
+                    if d.weekday() == 2: # Wednesday
+                        wednesday_dates.append(d)
+                except ValueError:
+                    pass
+            wednesday_dates.sort()
+            
+            if wednesday_dates:
+                latest_wed = wednesday_dates[-1]
+                prev_wed = latest_wed - timedelta(days=7)
+                
+                def get_rrp_value(date_obj, rrp_dict):
+                    d_str = date_obj.strftime('%Y-%m-%d')
+                    if d_str in rrp_dict:
+                        return rrp_dict[d_str]
+                    for i in range(1, 8):
+                        prev_date = date_obj - timedelta(days=i)
+                        prev_str = prev_date.strftime('%Y-%m-%d')
+                        if prev_str in rrp_dict:
+                            return rrp_dict[prev_str]
+                    return None
+
+                w_latest = walcl.get(latest_wed.strftime('%Y-%m-%d'))
+                tg_latest = wdtgal.get(latest_wed.strftime('%Y-%m-%d'))
+                rrp_latest = get_rrp_value(latest_wed, rrp)
+                
+                w_prev = walcl.get(prev_wed.strftime('%Y-%m-%d'))
+                tg_prev = wdtgal.get(prev_wed.strftime('%Y-%m-%d'))
+                rrp_prev = get_rrp_value(prev_wed, rrp)
+                
+                if w_latest is not None and tg_latest is not None and rrp_latest is not None:
+                    net_latest = w_latest - tg_latest - (rrp_latest * 1000.0)
+                    net_latest_trillions = net_latest / 1000000.0
+                    
+                    if w_prev is not None and tg_prev is not None and rrp_prev is not None:
+                        net_prev = w_prev - tg_prev - (rrp_prev * 1000.0)
+                        change_billions = (net_latest - net_prev) / 1000.0
+                        net_liquidity_str = f"{net_latest_trillions:.2f} Trillion (Weekly Change: {change_billions:+.2f} Billion)"
+                    else:
+                        net_liquidity_str = f"{net_latest_trillions:.2f} Trillion (Weekly Change: N/A)"
+                else:
+                    net_liquidity_str = "N/A"
+            else:
+                net_liquidity_str = "N/A"
+        except Exception as e:
+            net_liquidity_str = f"Error ({e})"
+            
+        # --- Sector VWAP Breadth ---
+        sector_etfs = ['US.XLK', 'US.XLF', 'US.XLV', 'US.XLE', 'US.XLY', 'US.XLP', 'US.XLB', 'US.XLU', 'US.XLRE', 'US.XLC', 'US.IYT']
+        valid_sectors = [c for c in sector_etfs if c in snap_info and snap_info[c].get('last') is not None and snap_info[c].get('avg_price') is not None]
+        if valid_sectors:
+            above_vwap_sectors = sum(1 for c in valid_sectors if snap_info[c]['last'] > snap_info[c]['avg_price'])
+            sector_breadth = (above_vwap_sectors / len(valid_sectors)) * 100.0
+        else:
+            sector_breadth = 0.0
+
+        if sector_breadth >= 60.0:
+            sector_category = "流動性潤沢（リスクオン）"
+        elif sector_breadth >= 40.0:
+            sector_category = "流動性平時（選択的物色）"
+        else:
+            sector_category = "流動性逼迫（本命集中・資金引き揚げ）"
+
+        # --- VIX & Risk-On ---
+        vix_info = snap_info.get('US.VIX')
+        vix_str = f"{vix_info['last']:.2f}" if vix_info and vix_info.get('last') is not None else "N/A"
+        
         hyg = snap_info.get('US.HYG')
         tlt = snap_info.get('US.TLT')
         if hyg and tlt and hyg.get('last') and tlt.get('last'):
             risk_on_ratio = hyg['last'] / tlt['last']
             risk_on_change = (hyg.get('today_change_pct') or 0.0) - (tlt.get('today_change_pct') or 0.0)
             risk_on_label = "資金流入傾向" if risk_on_change > 0 else "資金引き揚げ傾向"
+            sign = "+" if risk_on_change > 0 else ""
+            risk_on_str = f"{risk_on_ratio:.4f} (变化幅: {sign}{risk_on_change:.2f}%, {risk_on_label})"
+        else:
+            risk_on_str = "N/A"
+
+        print("  [マクロ指標・市場流動性]")
+        print(f"    US Net Liquidity   : {net_liquidity_str}")
+        print(f"    Sector VWAP Breadth: {sector_breadth:.1f}% ({sector_category})")
+        print(f"    Risk-On Ratio      : {risk_on_str}")
+        print(f"    VIX Index          : {vix_str}")
+        print(f"{'='*78}")
     else:
         jp2516 = snap_info.get('JP.2516')
         jp1306 = snap_info.get('JP.1306')
@@ -774,22 +895,30 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             risk_on_ratio = jp2516['last'] / jp1306['last']
             risk_on_change = (jp2516.get('today_change_pct') or 0.0) - (jp1306.get('today_change_pct') or 0.0)
             risk_on_label = "新興物色・リスクオン" if risk_on_change > 0 else "新興売却・ディフェンシブ"
-
-    print("  [市場流動性分析]")
-    if valid_non_etfs:
-        print(f"    VWAP Breadth  : {vwap_breadth:.1f}% ({breadth_category})")
-    else:
-        print(f"    VWAP Breadth  : N/A ({breadth_category})")
-
-    if risk_on_ratio is not None and risk_on_change is not None and risk_on_label is not None:
-        sign = "+" if risk_on_change > 0 else ""
-        if market == 'us':
-            print(f"    Risk-On Ratio : {risk_on_ratio:.4f} (HYG/TLT, 変化幅: {sign}{risk_on_change:.2f}%, {risk_on_label})")
+            sign = "+" if risk_on_change > 0 else ""
+            risk_on_str = f"{risk_on_ratio:.4f} (JP.2516/JP.1306, 変化幅: {sign}{risk_on_change:.2f}%, {risk_on_label})"
         else:
-            print(f"    Risk-On Ratio : {risk_on_ratio:.4f} (JP.2516/JP.1306, 変化幅: {sign}{risk_on_change:.2f}%, {risk_on_label})")
-    else:
-        print("    Risk-On Ratio : N/A")
-    print(f"{'='*78}")
+            risk_on_str = "N/A"
+            
+        non_etfs = [c for c in all_codes if not is_etf(c)]
+        valid_non_etfs = [c for c in non_etfs if c in snap_info and snap_info[c].get('last') is not None and snap_info[c].get('avg_price') is not None]
+        if valid_non_etfs:
+            above_vwap = sum(1 for c in valid_non_etfs if snap_info[c]['last'] > snap_info[c]['avg_price'])
+            vwap_breadth = (above_vwap / len(valid_non_etfs)) * 100.0
+        else:
+            vwap_breadth = 0.0
+
+        if vwap_breadth >= 60.0:
+            breadth_category = "流動性潤沢（リスクオン）"
+        elif vwap_breadth >= 40.0:
+            breadth_category = "流動性平時（選択的物色）"
+        else:
+            breadth_category = "流動性逼迫（本命集中・資金引き揚げ）"
+
+        print("  [市場流動性分析]")
+        print(f"    VWAP Breadth  : {vwap_breadth:.1f}% ({breadth_category})")
+        print(f"    Risk-On Ratio : {risk_on_str}")
+        print(f"{'='*78}")
 
     group_cands = {}
     order = group_order
