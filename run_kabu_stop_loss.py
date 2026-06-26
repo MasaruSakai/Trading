@@ -149,13 +149,12 @@ def main():
     for order in orders_list:
         state = order.get("State") or order.get("state")
         side = str(order.get("Side") or order.get("side") or "")
-        front_order_type = order.get("FrontOrderType") or order.get("front_order_type")
-        
-        # Filter active sell stop orders: State != 5 (not ended), Side == '1' (SELL), FrontOrderType == 30 (逆指値)
+        # Filter active sell orders: State != 5 (not ended), Side == '1' (SELL)
+        # Note: Since kabu station /orders response might not expose FrontOrderType/ReverseLimitOrder fields directly
+        # in some response versions, we clear all active sell orders for safety.
         state_val = int(state) if state is not None else None
-        front_order_type_val = int(front_order_type) if front_order_type is not None else None
         
-        if state_val != 5 and side == "1" and front_order_type_val == 30:
+        if state_val != 5 and side == "1":
             active_stop_orders.append(order)
 
     if not active_stop_orders:
