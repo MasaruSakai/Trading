@@ -521,7 +521,7 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
 
-    header_str = f"{'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'MTR':>9}{pl_header} {'小口過熱':>7}"
+    header_str = f"{'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'MTR':>9} {'Spread':>7}{pl_header} {'小口過熱':>7}"
     print("    " + header_str)
     print("    " + "-" * len(header_str))
 
@@ -533,10 +533,15 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
         pl_val_str = f"{pl_val:+.2f}%"
         pl_s = f" {pl_val_str:>9}" if is_holdings else ''
 
+        sp = r.get('spread_pct')
+        sp_str = f"{sp:.2f}%" if sp is not None else '  N/A'
+        sp_warn = '⚠SP' if sp is not None and sp >= 0.5 else ''
+        hot_str = ' '.join(filter(None, ['⚠' if r.get('small_dom') else '', sp_warn]))
+
         print(f"    {r['code']:<10} {bear_s}"
               f"{r.get('enhanced2_score', 0.0):>11.3f} "
               f"{r.get('today_change_pct', 0.0):>11.3f} "
-              f"{r.get('mtr', 0.0):>9.3f}{pl_s} {hot:>7}")
+              f"{r.get('mtr', 0.0):>9.3f} {sp_str:>7}{pl_s} {hot_str:>7}")
 
 
 def _print_sell_watch(cands, total, show_bear_etf=True):
@@ -707,6 +712,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                     'overnight': _row_float(row, 'overnight_price'), 'pre': _row_float(row, 'pre_price'),
                     'high': _row_float(row, 'high_price'), 'low': _row_float(row, 'low_price'),
                     'today_change_pct': change,
+                    'bid_price': _row_float(row, 'bid_price'),
+                    'ask_price': _row_float(row, 'ask_price'),
                 }
 
         elif len(codes) == 1:
@@ -874,6 +881,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             'ext_dev': ext_dev, 'ext_sess': ext_sess,
             'pl_ratio': pl_ratio,
             'mtr': mtr,
+            'spread_pct': ((info.get('ask_price') or 0) - (info.get('bid_price') or 0)) / (((info.get('ask_price') or 0) + (info.get('bid_price') or 0)) / 2) * 100 if (info.get('bid_price') or 0) > 0 and (info.get('ask_price') or 0) > 0 else None,
         }
 
     pass_map = {c: make(c, d, f, tov, vd, mtr) for c, d, f, tov, vd, mtr in passers}
