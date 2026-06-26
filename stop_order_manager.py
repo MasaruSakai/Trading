@@ -79,7 +79,7 @@ def update_stop_order(trd_ctx, code, qty, stop_price, acc_id):
         qty=qty,
         code=code,
         trd_side=TrdSide.SELL,
-        order_type=OrderType.STOP_LIMIT,
+        order_type=OrderType.STOP,
         aux_price=stop_price,
         trd_env=TrdEnv.REAL,
         acc_id=acc_id,
