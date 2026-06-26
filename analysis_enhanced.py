@@ -274,15 +274,24 @@ def _get_naaim_index_with_cache(cache_dir='config/macro_cache'):
         )
         with urllib.request.urlopen(req, timeout=10) as response:
             html = response.read().decode("utf-8", errors="replace")
-            pattern = r'<td>(\d{2}/\d{2}/\d{4})</td>\s*<td>([\d\.-]+)</td>'
+            pattern = r'\[new Date\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\),\s*([\d\.-]+)\]'
             matches = re.findall(pattern, html)
             if matches:
                 data = []
-                for m in matches[:10]:
-                    data.append({"date": m[0], "value": float(m[1])})
+                for m in matches:
+                    year = int(m[0])
+                    month = int(m[1]) + 1  # JS 0-based month to 1-based
+                    day = int(m[2])
+                    val = float(m[3])
+                    date_str = f"{month:02d}/{day:02d}/{year}"
+                    data.append({"date": date_str, "value": val, "sort_key": f"{year:04d}-{month:02d}-{day:02d}"})
+                data.sort(key=lambda x: x["sort_key"], reverse=True)
+                # Remove sort_key before saving
+                for item in data:
+                    item.pop("sort_key", None)
                 with open(cache_path, 'w', encoding='utf-8') as fp:
-                    json.dump(data, fp, ensure_ascii=False)
-                return data
+                    json.dump(data[:10], fp, ensure_ascii=False)
+                return data[:10]
     except Exception as e:
         # Silently log warning during background runs
         if os.path.exists(cache_path):
@@ -292,6 +301,28 @@ def _get_naaim_index_with_cache(cache_dir='config/macro_cache'):
             except Exception:
                 pass
     return None
+
+
+def _get_fms_cash_with_cache(cache_dir='config/macro_cache'):
+    import json
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, "FMS_CASH.json")
+    
+    if not os.path.exists(cache_path):
+        default_data = [
+            {"date": "2026-06", "value": 4.60}
+        ]
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as fp:
+                json.dump(default_data, fp, ensure_ascii=False)
+        except Exception:
+            pass
+            
+    try:
+        with open(cache_path, encoding='utf-8') as fp:
+            return json.load(fp)
+    except Exception:
+        return None
 
 
 def _row_float(row, key):
@@ -925,27 +956,25 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     except Exception as e:
         naaim_str = f"Error ({e})"
 
-    # --- AAII Sentiment Survey Calculation ---
-    aaii_str = "N/A"
+    # --- BofA FMS Cash Level ---
+    fms_str = "N/A"
     try:
-        aaii_bull = _get_fred_data_with_cache('AAIIBULL')
-        aaii_bear = _get_fred_data_with_cache('AAIIBEAR')
-        if aaii_bull and aaii_bear:
-            sorted_dates = sorted(aaii_bull.keys())
-            if sorted_dates:
-                latest_date = sorted_dates[-1]
-                bull_val = aaii_bull[latest_date]
-                bear_val = aaii_bear[latest_date]
+        fms_data = _get_fms_cash_with_cache()
+        if fms_data:
+            latest = fms_data[0]
+            val = latest["value"]
+            date_str = latest["date"]
+            
+            if val >= 5.0:
+                level_label = "過度な現金比率 (買い余力豊富・底値圏)"
+            elif val <= 4.0:
+                level_label = "過小な現金比率 (買い余力低下・過熱圏)"
+            else:
+                level_label = "平時 (4.0%〜5.0%の間)"
                 
-                if bull_val >= 50.0:
-                    aaii_label = "強気過熱 (天井警戒)"
-                elif bear_val >= 45.0:
-                    aaii_label = "弱気過熱 (底値警戒)"
-                else:
-                    aaii_label = "平時センチメント"
-                aaii_str = f"Bull: {bull_val:.1f}% / Bear: {bear_val:.1f}% ({aaii_label})"
+            fms_str = f"{val:.2f}% ({date_str}時点, {level_label})"
     except Exception as e:
-        aaii_str = f"Error ({e})"
+        fms_str = f"Error ({e})"
 
     if market == 'us':
         # --- Sector VWAP Breadth ---
@@ -984,8 +1013,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         print("                        (目安: 5.8兆$前後が現在の基準値。週次数十Billion$以上の急減は株式下落を警戒)")
         print(f"    NAAIM Exposure     : {naaim_str}")
         print("                        (NAAIM上昇: 株式リスク増, 低下: ヘッジ増, 極端に高(>=80%): 買い余力低下, 極端に低(<=40%): リスク削減済)")
-        print(f"    AAII Sentiment     : {aaii_str}")
-        print("                        (ファンドマネージャー現金比率の代替指標: Bull>=50%で天井警戒, Bear>=45%で底値警戒)")
+        print(f"    FMS Cash Level     : {fms_str}")
+        print("                        (目安: 5.0%以上で底値圏・買いシグナル、4.0%以下で過熱・売りシグナル)")
         print(f"    Sector VWAP Breadth: {sector_breadth:.1f}% ({sector_category})")
         print(f"    Risk-On Ratio      : {risk_on_str}")
         print(f"    VIX Index          : {vix_str}")
@@ -1022,8 +1051,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         print("                       (目安: 5.8兆$前後が現在の基準値。週次数十Billion$以上の急減は株式下落を警戒)")
         print(f"    NAAIM Exposure    : {naaim_str}")
         print("                       (NAAIM上昇: 株式リスク増, 低下: ヘッジ増, 極端に高(>=80%): 買い余力低下, 極端に低(<=40%): リスク削減済)")
-        print(f"    AAII Sentiment    : {aaii_str}")
-        print("                       (ファンドマネージャー現金比率の代替指標: Bull>=50%で天井警戒, Bear>=45%で底値警戒)")
+        print(f"    FMS Cash Level    : {fms_str}")
+        print("                       (目安: 5.0%以上で底値圏・買いシグナル、4.0%以下で過熱・売りシグナル)")
         print("  [市場流動性分析]")
         print(f"    VWAP Breadth  : {vwap_breadth:.1f}% ({breadth_category})")
         print(f"    Risk-On Ratio : {risk_on_str}")
