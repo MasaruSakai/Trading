@@ -64,12 +64,12 @@ def get_today_vwap(quote_ctx, code):
     """Fetches today's volume weighted average price (VWAP) from snapshot if inside RTH.
     If outside US Regular Trading Hours (RTH), fetches the last completed trading day's VWAP from historical daily klines.
     """
-    from datetime import datetime, time, timedelta
+    from datetime import datetime, time as dt_time, timedelta
     now = datetime.now()
     current_time = now.time()
     
     # Define US Regular Trading Hours JST window (safe estimate: 22:30 to 06:00 JST)
-    is_rth = (current_time >= time(22, 30)) or (current_time <= time(6, 0))
+    is_rth = (current_time >= dt_time(22, 30)) or (current_time <= dt_time(6, 0))
     
     if is_rth:
         ret, snap = quote_ctx.get_market_snapshot([code])
