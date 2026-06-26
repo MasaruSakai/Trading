@@ -884,6 +884,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
 
         print("  [マクロ指標・市場流動性]")
         print(f"    US Net Liquidity   : {net_liquidity_str}")
+        print("                        (目安: 5.8兆$前後が現在の基準値。週次数十Billion$以上の急減は株式下落を警戒)")
         print(f"    Sector VWAP Breadth: {sector_breadth:.1f}% ({sector_category})")
         print(f"    Risk-On Ratio      : {risk_on_str}")
         print(f"    VIX Index          : {vix_str}")
