@@ -83,7 +83,7 @@ def update_stop_order(trd_ctx, code, qty, stop_price, acc_id):
         aux_price=stop_price,
         trd_env=TrdEnv.REAL,
         acc_id=acc_id,
-        session=Session.ALL,
+        session=Session.RTH,
         jp_acc_type=SubAccType.JP_TOKUTEI
     )
     
