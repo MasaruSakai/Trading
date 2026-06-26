@@ -485,7 +485,7 @@ def _print_group(label, cands, top_n, total,
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     change_header = f" {'前日比%':>9}" if show_change_pct else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
-    extra_header = f" {'MTR':>9} {'Spread':>7}" if is_holdings else ''
+    extra_header = f" {'MTR%':>7} {'Spread':>7}" if is_holdings else ''
 
     if score_percent:
         header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header}{extra_header} {'小口過熱':>7}"
@@ -511,7 +511,8 @@ def _print_group(label, cands, top_n, total,
             sp_str = f"{sp:.2f}%" if sp is not None else '  N/A'
             sp_warn = '⚠SP' if sp is not None and sp >= 0.5 else ''
             hot_str = ' '.join(filter(None, ['⚠' if r.get('small_dom') else '', sp_warn]))
-            extra_s = f" {r.get('mtr', 0.0):>9.3f} {sp_str:>7}"
+            mtr_pct = r.get('mtr_pct', 0.0)
+            extra_s = f" {mtr_pct:>6.2f}% {sp_str:>7}"
 
         if score_percent:
             print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s}{extra_s} {hot_str:>7}")
@@ -890,6 +891,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             'ext_dev': ext_dev, 'ext_sess': ext_sess,
             'pl_ratio': pl_ratio,
             'mtr': mtr,
+            'mtr_pct': (mtr / last * 100) if last > 0 else 0.0,
             'spread_pct': ((info.get('ask_price') or 0) - (info.get('bid_price') or 0)) / (((info.get('ask_price') or 0) + (info.get('bid_price') or 0)) / 2) * 100 if (info.get('bid_price') or 0) > 0 and (info.get('ask_price') or 0) > 0 else None,
         }
 
