@@ -72,6 +72,17 @@ class KabuClient:
     def unregister_all(self):
         return self._request("PUT", "/kabusapi/unregister/all", {})
 
+    def orders(self, product=0):
+        params = {"product": product}
+        return self._request("GET", f"/kabusapi/orders?{urlencode(params)}")
+
+    def cancelorder(self, order_id):
+        payload = {"OrderId": order_id}
+        return self._request("PUT", "/kabusapi/cancelorder", payload)
+
+    def sendorder(self, payload):
+        return self._request("POST", "/kabusapi/sendorder", payload)
+
     def _request(self, method, path, payload=None, auth=True):
         data = None
         headers = {"Content-Type": "application/json"}
