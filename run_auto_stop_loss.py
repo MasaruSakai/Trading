@@ -61,24 +61,53 @@ def get_mtr(quote_ctx, code):
     return float(mtr)
 
 def get_today_vwap(quote_ctx, code):
-    """Fetches today's volume weighted average price (VWAP) from snapshot.
-
-    Args:
-        quote_ctx (OpenQuoteContext): Active quote context.
-        code (str): Stock code.
-
-    Returns:
-        float: Today's VWAP.
+    """Fetches today's volume weighted average price (VWAP) from snapshot if inside RTH.
+    If outside US Regular Trading Hours (RTH), fetches the last completed trading day's VWAP from historical daily klines.
     """
-    ret, snap = quote_ctx.get_market_snapshot([code])
-    time.sleep(0.2)
+    from datetime import datetime, time, timedelta
+    now = datetime.now()
+    current_time = now.time()
     
-    if ret != RET_OK or snap.empty:
-        raise ValueError(f"Failed to fetch market snapshot for {code}: {snap}")
+    # Define US Regular Trading Hours JST window (safe estimate: 22:30 to 06:00 JST)
+    is_rth = (current_time >= time(22, 30)) or (current_time <= time(6, 0))
+    
+    if is_rth:
+        ret, snap = quote_ctx.get_market_snapshot([code])
+        time.sleep(0.2)
         
-    # 'avg_price' in the snapshot returns the daily average price (VWAP)
-    vwap = snap['avg_price'].iloc[0]
-    return float(vwap)
+        if ret != RET_OK or snap.empty:
+            raise ValueError(f"Failed to fetch market snapshot for {code}: {snap}")
+            
+        # 'avg_price' in the snapshot returns the daily average price (VWAP)
+        vwap = snap['avg_price'].iloc[0]
+        return float(vwap)
+    else:
+        # Fetch recent historical daily data to compute the last completed trading day's VWAP
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
+        
+        ret, df, _ = quote_ctx.request_history_kline(
+            code, 
+            start=start_date, 
+            end=end_date, 
+            ktype='K_DAY', 
+            autype='qfq'
+        )
+        time.sleep(0.2)
+        
+        if ret != RET_OK or df.empty:
+            raise ValueError(f"Failed to fetch historical daily candles for {code}: {df}")
+            
+        last_row = df.iloc[-1]
+        volume = float(last_row['volume'])
+        turnover = float(last_row['turnover'])
+        
+        if volume > 0:
+            vwap = turnover / volume
+        else:
+            vwap = float(last_row['close'])
+            
+        return float(vwap)
 
 def cancel_all_active_stop_orders(trd_ctx, acc_id):
     """Cancels all active sell STOP orders for the account, regardless of holdings.
