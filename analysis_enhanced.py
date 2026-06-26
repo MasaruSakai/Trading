@@ -485,7 +485,7 @@ def _print_group(label, cands, top_n, total,
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     change_header = f" {'前日比%':>9}" if show_change_pct else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
-    extra_header = f" {'MTR%':>7} {'Spread':>7}" if is_holdings else ''
+    extra_header = f" {'MTR%':>7} {'Spread':>7}"
 
     if score_percent:
         header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header}{extra_header} {'小口過熱':>7}"
@@ -504,15 +504,12 @@ def _print_group(label, cands, top_n, total,
         pl_val_str = f"{pl_val:+.2f}%"
         pl_s = f" {pl_val_str:>9}" if is_holdings else ''
 
-        extra_s = ''
-        hot_str = '⚠' if r.get('small_dom') else ''
-        if is_holdings:
-            sp = r.get('spread_pct')
-            sp_str = f"{sp:.2f}%" if sp is not None else '  N/A'
-            sp_warn = '⚠SP' if sp is not None and sp >= 0.5 else ''
-            hot_str = ' '.join(filter(None, ['⚠' if r.get('small_dom') else '', sp_warn]))
-            mtr_pct = r.get('mtr_pct', 0.0)
-            extra_s = f" {mtr_pct:>6.2f}% {sp_str:>7}"
+        sp = r.get('spread_pct')
+        sp_str = f"{sp:.2f}%" if sp is not None else '  N/A'
+        sp_warn = '⚠SP' if sp is not None and sp >= 0.5 else ''
+        hot_str = ' '.join(filter(None, ['⚠' if r.get('small_dom') else '', sp_warn]))
+        mtr_pct = r.get('mtr_pct', 0.0)
+        extra_s = f" {mtr_pct:>6.2f}% {sp_str:>7}"
 
         if score_percent:
             print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s}{extra_s} {hot_str:>7}")
@@ -811,10 +808,20 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                 mtr_cache[c] = 0.0
         mtr = mtr_cache[c]
         
-        # 新規候補に対する前段のフィルタリング（VWAP足切り）
+        # 新規候補に対する前段のフィルタリング
         if not is_holding:
+            # 1. VWAP足切り
             if avg_price > 0 and mtr > 0:
                 if last < avg_price - (0.5 * mtr):
+                    continue  # 足切り
+            
+            # 2. スプレッドが通常の値動き（MTR%）より広い異常値は弾く
+            bid = info.get('bid_price') or 0.0
+            ask = info.get('ask_price') or 0.0
+            if bid > 0 and ask > 0 and last > 0 and mtr > 0:
+                spread_pct = (ask - bid) / ((ask + bid) / 2) * 100
+                mtr_pct = (mtr / last) * 100
+                if spread_pct > mtr_pct:
                     continue  # 足切り
                     
         avg_price_dev = (last / avg_price - 1.0) if avg_price > 0 else None   # 表示のみ
