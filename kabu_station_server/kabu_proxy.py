@@ -121,6 +121,20 @@ def make_handler(target_base_url, token_cache, allowed_clients, timeout, auto_au
             content_length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(content_length) if content_length else None
 
+            if parsed.path in ("/kabusapi/sendorder", "/kabusapi/cancelorder") and body:
+                try:
+                    payload = json.loads(body.decode("utf-8"))
+                    if not payload.get("Password"):
+                        from kabu_check import read_secret
+                        password = read_secret(token_cache.password_file)
+                        if password:
+                            if token_cache.password_suffix:
+                                password += token_cache.password_suffix
+                            payload["Password"] = password
+                            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                except Exception as e:
+                    pass
+
             headers = {}
             for key, value in self.headers.items():
                 lk = key.lower()
