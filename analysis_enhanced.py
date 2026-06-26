@@ -485,16 +485,16 @@ def _print_group(label, cands, top_n, total,
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     change_header = f" {'前日比%':>9}" if show_change_pct else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
+    extra_header = f" {'MTR':>9} {'Spread':>7}" if is_holdings else ''
 
     if score_percent:
-        header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header} {'小口過熱':>7}"
+        header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header}{extra_header} {'小口過熱':>7}"
     else:
-        header_str = f"{'Code':<10} {bear_header}{'小口過熱':>7} {score_header:>11}{change_header}{pl_header}"
+        header_str = f"{'Code':<10} {bear_header}{'小口過熱':>7} {score_header:>11}{change_header}{pl_header}{extra_header}"
     print("    " + header_str)
     print("    " + "-" * len(header_str))
 
     for r in display:
-        hot = '⚠' if r.get('small_dom') else ''
         bear_s = f"{(r.get('bear_etf_code') or '--'):>8} " if show_bear_etf else ''
         score = r.get(score_key, 0.0)
         score_s = f"{score*100:>11.3f}" if score_percent else f"{score:>11,.0f}"
@@ -504,10 +504,19 @@ def _print_group(label, cands, top_n, total,
         pl_val_str = f"{pl_val:+.2f}%"
         pl_s = f" {pl_val_str:>9}" if is_holdings else ''
 
+        extra_s = ''
+        hot_str = '⚠' if r.get('small_dom') else ''
+        if is_holdings:
+            sp = r.get('spread_pct')
+            sp_str = f"{sp:.2f}%" if sp is not None else '  N/A'
+            sp_warn = '⚠SP' if sp is not None and sp >= 0.5 else ''
+            hot_str = ' '.join(filter(None, ['⚠' if r.get('small_dom') else '', sp_warn]))
+            extra_s = f" {r.get('mtr', 0.0):>9.3f} {sp_str:>7}"
+
         if score_percent:
-            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s} {hot:>7}")
+            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s}{extra_s} {hot_str:>7}")
         else:
-            print(f"    {r['code']:<10} {bear_s}{hot:>7} {score_s}{change_s}{pl_s}")
+            print(f"    {r['code']:<10} {bear_s}{hot_str:>7} {score_s}{change_s}{pl_s}{extra_s}")
 
 
 def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
