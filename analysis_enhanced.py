@@ -57,6 +57,7 @@ SNAPSHOT_BATCH = 200
 OVERHEAT_THRESHOLD_PCT = 1.0
 OVERHEAT_FACTOR = 2.5
 OVERHEAT_CAP = 15.0
+CAPITAL_GAINS_TAX_RATE = 0.20315
 
 GDRIVE_LOG_DIR = {
     'us': '/Users/masaru/Library/CloudStorage/GoogleDrive-sbrmsj@gmail.com/マイドライブ/AssetManagement/米国logs',
@@ -814,8 +815,15 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             if avg_price > 0 and mtr > 0:
                 if last < avg_price - (0.5 * mtr):
                     continue  # 足切り
+
+            # 2. 当日変化率が通常の値幅(MTR%)を超える銘柄は除外
+            change_pct = abs(info.get('today_change_pct', 0.0))
+            if last > 0 and mtr > 0:
+                mtr_pct = (mtr / last) * 100
+                if change_pct > mtr_pct:
+                    continue  # 足切り
             
-            # 2. スプレッドが通常の値動き（MTR%）より広い異常値は弾く
+            # 3. スプレッドが通常の値動き（MTR%）より広い異常値は弾く
             bid = info.get('bid_price') or 0.0
             ask = info.get('ask_price') or 0.0
             if bid > 0 and ask > 0 and last > 0 and mtr > 0:
@@ -849,30 +857,14 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         ext_dev, ext_sess = ext_confirm(info, market)
         enhanced1_score_pct = ((sort_weighted_net / tov) * 100.0) if tov > 0 else 0.0
 
-        # MTRに基づく過熱減点と動意加点
-        mtr_overheat = 0.0
-        mtr_momentum = 0.0
-        if mtr > 0:
-            high = info.get('high', 0.0)
-            low = info.get('low', 0.0)
-            today_range = high - low
-            width_ratio = today_range / mtr
-            
-            # MTR過熱減点（普段の値幅の1.5倍を超えたら減点）
-            mtr_overheat = math.sqrt(max(0.0, (width_ratio - 1.5) * 5.0))
-            
-            # MTR動意加点（普段の動きに対して対数でスケーリング）
-            mtr_momentum = math.log10(max(0.1, width_ratio)) * 3.0
-
         pl_ratio = holding_pls.get(c, 0.0)
         bonus = 0.0
-        if c in holding_codes:
-            bonus = max(pl_ratio * 0.2, 0.0)
+        if c in holding_codes and pl_ratio > 0.0:
+            gain_ratio = pl_ratio / 100.0
+            bonus = 100.0 * CAPITAL_GAINS_TAX_RATE * gain_ratio / (1.0 + gain_ratio)
 
         sort_ingest_ratio = (sort_weighted_net / tov) if tov > 0 else 0.0
-        
-        # 改善版2スコア：大口流入比率 - MTR過熱減点 + MTR動意加点
-        enhanced2_score = enhanced1_score_pct - mtr_overheat + mtr_momentum
+        enhanced2_score = enhanced1_score_pct
 
         sort_ingest_ratio += bonus / 100.0
         enhanced2_score += bonus
@@ -886,7 +878,6 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             'ingest_ratio': (weighted_net / tov) if tov > 0 else 0.0,
             'sort_ingest_ratio': sort_ingest_ratio,
             'today_change_pct': info.get('today_change_pct', 0.0),
-            'overheat_penalty': mtr_overheat,
             'enhanced2_score': enhanced2_score,
             'big_med5': f.get('big_med5', 0.0),
             'big_component_med5': f.get('big_component_med5', 0.0),
