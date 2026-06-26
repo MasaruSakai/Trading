@@ -233,12 +233,12 @@ def main():
                         case_label = "Profit Large -> Stop at Cost (Break-even)"
                     # Case B: Small profit (vwap - mtr <= cost_price)
                     else:
-                        stop_price = vwap - mtr
-                        case_label = "Profit Small -> Stop at VWAP - MTR"
+                        stop_price = min(vwap, nominal_price) - mtr
+                        case_label = "Profit Small -> Stop at min(VWAP, Price) - MTR"
                 # 2. No profit (nominal_price <= cost_price)
                 else:
-                    stop_price = vwap - mtr
-                    case_label = "No Profit -> Stop at VWAP - MTR"
+                    stop_price = min(vwap, nominal_price) - mtr
+                    case_label = "No Profit -> Stop at min(VWAP, Price) - MTR"
                 
                 # Round stop price according to US market tick size specifications:
                 # $1.00 and above: 2 decimal places (cents)
