@@ -245,6 +245,55 @@ def _get_fred_data_with_cache(series_id, cache_dir='config/macro_cache'):
     return {}
 
 
+def _get_naaim_index_with_cache(cache_dir='config/macro_cache'):
+    import json
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, "NAAIM.json")
+    
+    use_cache = False
+    if os.path.exists(cache_path):
+        mtime = datetime.fromtimestamp(os.path.getmtime(cache_path))
+        if mtime.date() == datetime.now().date():
+            use_cache = True
+            
+    if use_cache:
+        try:
+            with open(cache_path, encoding='utf-8') as fp:
+                return json.load(fp)
+        except Exception:
+            pass
+            
+    # Fetch from official website
+    url = "https://naaim.org/programs/naaim-exposure-index/"
+    try:
+        import urllib.request
+        import re
+        req = urllib.request.Request(
+            url, 
+            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html = response.read().decode("utf-8", errors="replace")
+            pattern = r'<td>(\d{2}/\d{2}/\d{4})</td>\s*<td>([\d\.-]+)</td>'
+            matches = re.findall(pattern, html)
+            if matches:
+                data = []
+                for m in matches[:10]:
+                    data.append({"date": m[0], "value": float(m[1])})
+                with open(cache_path, 'w', encoding='utf-8') as fp:
+                    json.dump(data, fp, ensure_ascii=False)
+                return data
+    except Exception as e:
+        # Silently log warning during background runs
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, encoding='utf-8') as fp:
+                    return json.load(fp)
+            except Exception:
+                pass
+    return None
+
+
 def _row_float(row, key):
     try:
         return float(row.get(key, 0) or 0)
@@ -851,6 +900,53 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     except Exception as e:
         net_liquidity_str = f"Error ({e})"
 
+    # --- NAAIM Exposure Index Calculation ---
+    naaim_str = "N/A"
+    try:
+        naaim_data = _get_naaim_index_with_cache()
+        if naaim_data:
+            latest = naaim_data[0]
+            val = latest["value"]
+            prev_val = naaim_data[1]["value"] if len(naaim_data) > 1 else None
+            
+            if val >= 80.0:
+                level_label = "極端に高い (買い余力低下・過熱)"
+            elif val <= 40.0:
+                level_label = "極端に低い (既にリスク削減済・底値圏)"
+            else:
+                level_label = "中立"
+                
+            if prev_val is not None:
+                change = val - prev_val
+                trend_label = "リスク増加" if change > 0 else "ヘッジ・ショート増加"
+                naaim_str = f"{val:.2f}% (Weekly Change: {change:+.2f}%, {level_label} | {trend_label})"
+            else:
+                naaim_str = f"{val:.2f}% ({level_label})"
+    except Exception as e:
+        naaim_str = f"Error ({e})"
+
+    # --- AAII Sentiment Survey Calculation ---
+    aaii_str = "N/A"
+    try:
+        aaii_bull = _get_fred_data_with_cache('AAIIBULL')
+        aaii_bear = _get_fred_data_with_cache('AAIIBEAR')
+        if aaii_bull and aaii_bear:
+            sorted_dates = sorted(aaii_bull.keys())
+            if sorted_dates:
+                latest_date = sorted_dates[-1]
+                bull_val = aaii_bull[latest_date]
+                bear_val = aaii_bear[latest_date]
+                
+                if bull_val >= 50.0:
+                    aaii_label = "強気過熱 (天井警戒)"
+                elif bear_val >= 45.0:
+                    aaii_label = "弱気過熱 (底値警戒)"
+                else:
+                    aaii_label = "平時センチメント"
+                aaii_str = f"Bull: {bull_val:.1f}% / Bear: {bear_val:.1f}% ({aaii_label})"
+    except Exception as e:
+        aaii_str = f"Error ({e})"
+
     if market == 'us':
         # --- Sector VWAP Breadth ---
         sector_etfs = ['US.XLK', 'US.XLF', 'US.XLV', 'US.XLE', 'US.XLY', 'US.XLP', 'US.XLB', 'US.XLU', 'US.XLRE', 'US.XLC', 'US.IYT']
@@ -886,6 +982,10 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         print("  [マクロ指標・市場流動性]")
         print(f"    US Net Liquidity   : {net_liquidity_str}")
         print("                        (目安: 5.8兆$前後が現在の基準値。週次数十Billion$以上の急減は株式下落を警戒)")
+        print(f"    NAAIM Exposure     : {naaim_str}")
+        print("                        (NAAIM上昇: 株式リスク増, 低下: ヘッジ増, 極端に高(>=80%): 買い余力低下, 極端に低(<=40%): リスク削減済)")
+        print(f"    AAII Sentiment     : {aaii_str}")
+        print("                        (ファンドマネージャー現金比率の代替指標: Bull>=50%で天井警戒, Bear>=45%で底値警戒)")
         print(f"    Sector VWAP Breadth: {sector_breadth:.1f}% ({sector_category})")
         print(f"    Risk-On Ratio      : {risk_on_str}")
         print(f"    VIX Index          : {vix_str}")
@@ -920,6 +1020,10 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         print("  [マクロ指標・世界流動性]")
         print(f"    US Net Liquidity  : {net_liquidity_str}")
         print("                       (目安: 5.8兆$前後が現在の基準値。週次数十Billion$以上の急減は株式下落を警戒)")
+        print(f"    NAAIM Exposure    : {naaim_str}")
+        print("                       (NAAIM上昇: 株式リスク増, 低下: ヘッジ増, 極端に高(>=80%): 買い余力低下, 極端に低(<=40%): リスク削減済)")
+        print(f"    AAII Sentiment    : {aaii_str}")
+        print("                       (ファンドマネージャー現金比率の代替指標: Bull>=50%で天井警戒, Bear>=45%で底値警戒)")
         print("  [市場流動性分析]")
         print(f"    VWAP Breadth  : {vwap_breadth:.1f}% ({breadth_category})")
         print(f"    Risk-On Ratio : {risk_on_str}")
