@@ -540,8 +540,11 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             _snap(codes[:mid])
             _snap(codes[mid:])
 
-    for i in range(0, len(all_codes), SNAPSHOT_BATCH):
-        _snap(all_codes[i:i + SNAPSHOT_BATCH])
+    macro_indicators = ['US.HYG', 'US.TLT'] if market == 'us' else ['JP.2516', 'JP.1306']
+    snap_targets = sorted(list(set(all_codes) | set(macro_indicators)))
+
+    for i in range(0, len(snap_targets), SNAPSHOT_BATCH):
+        _snap(snap_targets[i:i + SNAPSHOT_BATCH])
     print(f"{len(all_codes)}銘柄ユニーク / snapshot {len(snap_info)}銘柄")
 
     # Step 3: 並列で 分布(当日) + 大口5日中央値
@@ -735,6 +738,57 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     elapsed = (datetime.now() - t0).total_seconds()
     print(f"\n{'='*78}")
     print(f"  分析結果  {cfg['label']}  ({datetime.now().strftime('%H:%M:%S')}  経過: {elapsed:.0f}秒)")
+    print(f"{'='*78}")
+
+    # --- Market Liquidity Metrics ---
+    non_etfs = [c for c in all_codes if not is_etf(c)]
+    valid_non_etfs = [c for c in non_etfs if c in snap_info and snap_info[c].get('last') is not None and snap_info[c].get('avg_price') is not None]
+    if valid_non_etfs:
+        above_vwap = sum(1 for c in valid_non_etfs if snap_info[c]['last'] > snap_info[c]['avg_price'])
+        vwap_breadth = (above_vwap / len(valid_non_etfs)) * 100.0
+    else:
+        vwap_breadth = 0.0
+
+    if vwap_breadth >= 60.0:
+        breadth_category = "流動性潤沢（リスクオン）"
+    elif vwap_breadth >= 40.0:
+        breadth_category = "流動性平時（選択的物色）"
+    else:
+        breadth_category = "流動性逼迫（本命集中・資金引き揚げ）"
+
+    risk_on_ratio = None
+    risk_on_change = None
+    risk_on_label = None
+
+    if market == 'us':
+        hyg = snap_info.get('US.HYG')
+        tlt = snap_info.get('US.TLT')
+        if hyg and tlt and hyg.get('last') and tlt.get('last'):
+            risk_on_ratio = hyg['last'] / tlt['last']
+            risk_on_change = (hyg.get('today_change_pct') or 0.0) - (tlt.get('today_change_pct') or 0.0)
+            risk_on_label = "資金流入傾向" if risk_on_change > 0 else "資金引き揚げ傾向"
+    else:
+        jp2516 = snap_info.get('JP.2516')
+        jp1306 = snap_info.get('JP.1306')
+        if jp2516 and jp1306 and jp2516.get('last') and jp1306.get('last'):
+            risk_on_ratio = jp2516['last'] / jp1306['last']
+            risk_on_change = (jp2516.get('today_change_pct') or 0.0) - (jp1306.get('today_change_pct') or 0.0)
+            risk_on_label = "新興物色・リスクオン" if risk_on_change > 0 else "新興売却・ディフェンシブ"
+
+    print("  [市場流動性分析]")
+    if valid_non_etfs:
+        print(f"    VWAP Breadth  : {vwap_breadth:.1f}% ({breadth_category})")
+    else:
+        print(f"    VWAP Breadth  : N/A ({breadth_category})")
+
+    if risk_on_ratio is not None and risk_on_change is not None and risk_on_label is not None:
+        sign = "+" if risk_on_change > 0 else ""
+        if market == 'us':
+            print(f"    Risk-On Ratio : {risk_on_ratio:.4f} (HYG/TLT, 変化幅: {sign}{risk_on_change:.2f}%, {risk_on_label})")
+        else:
+            print(f"    Risk-On Ratio : {risk_on_ratio:.4f} (JP.2516/JP.1306, 変化幅: {sign}{risk_on_change:.2f}%, {risk_on_label})")
+    else:
+        print("    Risk-On Ratio : N/A")
     print(f"{'='*78}")
 
     group_cands = {}
