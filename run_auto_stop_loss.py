@@ -13,6 +13,7 @@ import sys
 import time
 import pandas as pd
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from futu import *
 
 # Include current directory in import path to find stop_order_manager
@@ -21,6 +22,7 @@ from stop_order_manager import update_stop_order
 
 # Constants
 ACC_ID = 284852706236374484  # Account ID
+US_EASTERN = ZoneInfo("America/New_York")
 
 def get_mtr(quote_ctx, code):
     """Calculates Median True Range (MTR) for the last 14 trading days.
@@ -64,12 +66,17 @@ def get_today_vwap(quote_ctx, code):
     """Fetches today's volume weighted average price (VWAP) from snapshot if inside RTH.
     If outside US Regular Trading Hours (RTH), fetches the last completed trading day's VWAP from historical daily klines.
     """
-    from datetime import datetime, time as dt_time, timedelta
-    now = datetime.now()
-    current_time = now.time()
-    
-    # Define US Regular Trading Hours JST window (safe estimate: 22:30 to 06:00 JST)
-    is_rth = (current_time >= dt_time(22, 30)) or (current_time <= dt_time(6, 0))
+    from datetime import time as dt_time
+
+    now_et = datetime.now(US_EASTERN)
+    current_time = now_et.time()
+
+    # US Regular Trading Hours are 09:30-16:00 America/New_York.
+    # Using ET avoids DST drift that a fixed JST window would introduce.
+    is_rth = (
+        now_et.weekday() < 5 and
+        dt_time(9, 30) <= current_time <= dt_time(16, 0)
+    )
     
     if is_rth:
         ret, snap = quote_ctx.get_market_snapshot([code])
@@ -83,8 +90,8 @@ def get_today_vwap(quote_ctx, code):
         return float(vwap)
     else:
         # Fetch recent historical daily data to compute the last completed trading day's VWAP
-        end_date = datetime.now().strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
+        end_date = now_et.strftime("%Y-%m-%d")
+        start_date = (now_et - timedelta(days=10)).strftime("%Y-%m-%d")
         
         ret, df, _ = quote_ctx.request_history_kline(
             code, 
