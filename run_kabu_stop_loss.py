@@ -252,6 +252,26 @@ def main():
         sys.exit(1)
 
     try:
+        # Calculate 1306 (TOPIX ETF) standard MTR ratio
+        print("\nCalculating JP.1306 standard MTR ratio...")
+        index_code = "JP.1306"
+        index_symbol = "1306"
+        index_mtr = get_mtr(quote_ctx, index_code)
+        
+        try:
+            index_board = client.board(index_symbol)
+            index_last = float(index_board.get("CurrentPrice") or index_board.get("current_price") or 0)
+        except Exception as e:
+            print(f"Warning: Failed to fetch index current price for {index_symbol}: {e}")
+            index_last = 0.0
+            
+        if index_last <= 0:
+            print("Warning: index_last is 0 or negative. Falling back to 2700.0.")
+            index_last = 2700.0
+            
+        index_mtr_ratio = index_mtr / index_last
+        print(f"JP.1306 MTR: {index_mtr:.3f}, Last: {index_last:.2f}, Index MTR Ratio: {index_mtr_ratio:.6f}")
+        
         # STEP 2: Loop through positions
         print("\n--- STEP 2: Updating stop-loss orders ---")
         for pos in active_positions:
@@ -281,22 +301,17 @@ def main():
                     print(f"Warning: Invalid nominal_price ({nominal_price}) or vwap ({vwap}) for {symbol}. Skipping.")
                     continue
                 
-                # Compute stop_price
-                if nominal_price > cost_price:
-                    if cost_price < (vwap - mtr):
-                        stop_price = cost_price
-                        case_label = "Profit Large -> Stop at Cost (Break-even)"
-                    else:
-                        stop_price = vwap - mtr
-                        case_label = "Profit Small -> Stop at VWAP - MTR"
-                else:
-                    stop_price = vwap - mtr
-                    case_label = "No Profit -> Stop at VWAP - MTR"
+                # Compute stop_price based on index normalized volatility and min(VWAP, current price)
+                mtr_ratio = mtr / nominal_price
+                combined_ratio = (mtr_ratio + index_mtr_ratio) / 2.0
+                base_price = min(vwap, nominal_price)
+                stop_price = base_price - (nominal_price * combined_ratio)
+                case_label = "Normalized Index Volatility Stop"
                 
                 # Round down to nearest JP tick
                 rounded_stop_price = round_down_jp_tick(stop_price)
                 
-                print(f"  MTR: {mtr:.3f}, VWAP: {vwap:.3f}, Last Price: {nominal_price:.3f}")
+                print(f"  MTR: {mtr:.3f}, VWAP: {vwap:.3f}, Last Price: {nominal_price:.3f}, Individual MTR Ratio: {mtr_ratio:.6f}, Combined Ratio: {combined_ratio:.6f}")
                 print(f"  Decision: {case_label} | Raw Stop Price: {stop_price:.3f} | Rounded Stop Price: {rounded_stop_price}")
                 
                 # Send the new stop order

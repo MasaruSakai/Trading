@@ -182,6 +182,18 @@ def main():
         # 0. Cancel all active stop orders first
         cancel_all_active_stop_orders(trd_ctx, ACC_ID)
         
+        # Calculate SPY standard MTR ratio
+        print("\nCalculating SPY standard MTR ratio...")
+        spy_code = 'US.SPY'
+        spy_mtr = get_mtr(quote_ctx, spy_code)
+        ret_spy, spy_snap = quote_ctx.get_market_snapshot([spy_code])
+        time.sleep(0.2)
+        if ret_spy != RET_OK or spy_snap.empty:
+            raise ValueError(f"Failed to fetch market snapshot for {spy_code}: {spy_snap}")
+        spy_last = float(spy_snap['last_price'].iloc[0])
+        spy_mtr_ratio = spy_mtr / spy_last
+        print(f"SPY MTR: {spy_mtr:.3f}, SPY Last: {spy_last:.2f}, SPY MTR Ratio: {spy_mtr_ratio:.6f}")
+        
         # 1. Fetch current US positions
         print("\nQuerying current US positions...")
         ret, positions = trd_ctx.position_list_query(
@@ -224,21 +236,12 @@ def main():
                 mtr = get_mtr(quote_ctx, code)
                 vwap = get_today_vwap(quote_ctx, code)
                 
-                # Apply MTR-based stop-loss logic
-                # 1. Has holding profit (nominal_price > cost_price)
-                if nominal_price > cost_price:
-                    # Case A: Large profit (cost_price < vwap - mtr)
-                    if cost_price < (vwap - mtr):
-                        stop_price = cost_price
-                        case_label = "Profit Large -> Stop at Cost (Break-even)"
-                    # Case B: Small profit (vwap - mtr <= cost_price)
-                    else:
-                        stop_price = min(vwap, nominal_price) - mtr
-                        case_label = "Profit Small -> Stop at min(VWAP, Price) - MTR"
-                # 2. No profit (nominal_price <= cost_price)
-                else:
-                    stop_price = min(vwap, nominal_price) - mtr
-                    case_label = "No Profit -> Stop at min(VWAP, Price) - MTR"
+                # Apply MTR-based stop-loss logic using SPY standardized volatility
+                mtr_ratio = mtr / nominal_price
+                combined_ratio = (mtr_ratio + spy_mtr_ratio) / 2.0
+                base_price = min(vwap, nominal_price)
+                stop_price = base_price - (nominal_price * combined_ratio)
+                case_label = "Normalized Index Volatility Stop"
                 
                 # Round stop price according to US market tick size specifications:
                 # $1.00 and above: 2 decimal places (cents)
@@ -248,8 +251,7 @@ def main():
                 else:
                     stop_price = round(stop_price, 4)
 
-                
-                print(f"MTR: {mtr:.3f}, VWAP: {vwap:.3f}")
+                print(f"MTR: {mtr:.3f}, VWAP: {vwap:.3f}, Individual MTR Ratio: {mtr_ratio:.6f}, Combined Ratio: {combined_ratio:.6f}")
                 print(f"Decision: {case_label} | Target Stop Price: {stop_price}")
                 
                 # Trigger cancellation and re-placement of stop order
