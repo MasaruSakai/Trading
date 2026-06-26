@@ -70,3 +70,7 @@ logs/
 
 ### Local tool state
 .claude/
+
+# Macro Cache
+config/macro_cache/
+
