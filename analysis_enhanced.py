@@ -531,7 +531,7 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
 
-    header_str = f"{'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'MTR':>9} {'Spread':>7}{pl_header} {'小口過熱':>7}"
+    header_str = f"{'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'MTR%':>7} {'Spread':>7}{pl_header} {'小口過熱':>7}"
     print("    " + header_str)
     print("    " + "-" * len(header_str))
 
@@ -551,7 +551,7 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
         print(f"    {r['code']:<10} {bear_s}"
               f"{r.get('enhanced2_score', 0.0):>11.3f} "
               f"{r.get('today_change_pct', 0.0):>11.3f} "
-              f"{r.get('mtr', 0.0):>9.3f} {sp_str:>7}{pl_s} {hot_str:>7}")
+              f"{r.get('mtr_pct', 0.0):>6.2f}% {sp_str:>7}{pl_s} {hot_str:>7}")
 
 
 def _print_sell_watch(cands, total, show_bear_etf=True):
