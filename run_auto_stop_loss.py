@@ -102,10 +102,10 @@ def cancel_all_active_stop_orders(trd_ctx, acc_id):
         print("No active orders found to clear.")
         return
         
-    # Filter for SELL side and STOP order type
+    # Filter for SELL side and STOP/STOP_LIMIT order type
     target_orders = data[
         (data['trd_side'].astype(str) == 'SELL') & 
-        (data['order_type'].astype(str) == 'STOP')
+        (data['order_type'].astype(str).isin(['STOP', 'STOP_LIMIT']))
     ]
     
     if target_orders.empty:

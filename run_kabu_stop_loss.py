@@ -92,6 +92,47 @@ def round_down_jp_tick(p):
     else:
         return float(math.floor(p / 100.0) * 100.0)
 
+def get_next_business_day():
+    """Get the next business day for the Japan stock market, taking into account
+    weekends, public holidays (2026/2027), and New Year holidays (12/31 - 1/3).
+    """
+    current_date = datetime.now()
+    
+    jp_holidays = {
+        # 2026
+        "2026-01-01", "2026-01-02", "2026-01-03",
+        "2026-01-12", "2026-02-11", "2026-02-23", "2026-03-20", "2026-04-29",
+        "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06",
+        "2026-07-20", "2026-08-11", "2026-09-21", "2026-09-22", "2026-09-23",
+        "2026-10-12", "2026-11-03", "2026-11-23", "2026-12-31",
+        # 2027
+        "2027-01-01", "2027-01-02", "2027-01-03",
+        "2027-01-11", "2027-02-11", "2027-02-23", "2027-03-21", "2027-03-22",
+        "2027-04-29", "2027-05-03", "2027-05-04", "2027-05-05",
+        "2027-07-19", "2027-08-11", "2027-09-20", "2027-09-23",
+        "2027-10-11", "2027-11-03", "2027-11-23", "2027-12-31",
+    }
+    
+    next_day = current_date + timedelta(days=1)
+    while True:
+        if next_day.weekday() >= 5:  # Saturday or Sunday
+            next_day += timedelta(days=1)
+            continue
+            
+        date_str = next_day.strftime("%Y-%m-%d")
+        if date_str in jp_holidays:
+            next_day += timedelta(days=1)
+            continue
+            
+        # Check general New Year's holiday (12/31 - 01/03) for any year
+        if (next_day.month == 12 and next_day.day == 31) or (next_day.month == 1 and next_day.day in [1, 2, 3]):
+            next_day += timedelta(days=1)
+            continue
+            
+        break
+        
+    return next_day
+
 def main():
     parser = argparse.ArgumentParser(description="Japanese Stock Stop-Loss Update Script")
     parser.add_argument("--base-url", default=os.getenv("KABU_BASE_URL", "http://10.215.1.57:18180"))
@@ -271,7 +312,7 @@ def main():
                     "Qty": qty,
                     "FrontOrderType": 30,
                     "Price": 0,
-                    "ExpireDay": 0,
+                    "ExpireDay": int(get_next_business_day().strftime("%Y%m%d")),
                     "ReverseLimitOrder": {
                         "TriggerSec": 1,
                         "TriggerPrice": rounded_stop_price,

@@ -42,10 +42,10 @@ def update_stop_order(trd_ctx, code, qty, stop_price, acc_id):
     # 2. Filter for sell STOP orders
 
     if not data.empty:
-        # Filter for SELL side and STOP order type
+        # Filter for SELL side and STOP/STOP_LIMIT order type
         target_orders = data[
             (data['trd_side'].astype(str) == 'SELL') & 
-            (data['order_type'].astype(str) == 'STOP')
+            (data['order_type'].astype(str).isin(['STOP', 'STOP_LIMIT']))
         ]
         
         # 3. Cancel each existing STOP order found
@@ -79,10 +79,12 @@ def update_stop_order(trd_ctx, code, qty, stop_price, acc_id):
         qty=qty,
         code=code,
         trd_side=TrdSide.SELL,
-        order_type=OrderType.STOP,
+        order_type=OrderType.STOP_LIMIT,
         aux_price=stop_price,
         trd_env=TrdEnv.REAL,
-        acc_id=acc_id
+        acc_id=acc_id,
+        session=Session.ALL,
+        jp_acc_type=SubAccType.JP_TOKUTEI
     )
     
     if ret_place == RET_OK:
