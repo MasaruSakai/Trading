@@ -836,6 +836,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         weighted_net = d['super_net'] + big * 0.5
         sort_weighted_net = weighted_net - d['small_net'] * 0.25
         info = snap_info.get(c, {})
+        last = info.get('last', 0.0)
         is_target_etf = is_etf(c)
         bear_etf_code = find_bear_etf_code(market, c, info.get('name', ''), is_target_etf)
         ext_dev, ext_sess = ext_confirm(info, market)
