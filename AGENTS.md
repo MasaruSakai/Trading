@@ -6,6 +6,7 @@
 - Perform every code or documentation change in a dedicated Git worktree and branch.
 - Create pull requests directly from the work branch to `main`. Do not use `develop` for new work.
 - The main thread reviews the pull request, merges it, updates the production checkout, restarts affected services, and verifies the result.
+- An implementation task is not complete until its pull request is merged into `main`, the production checkout is updated, affected services are restarted when necessary, and the production result is verified.
 - Pull request titles and descriptions must be written in Japanese.
 - Keep one pull request focused on one coherent change. Report only the PR URL, changed files, verification results, unresolved items, and deployment steps.
 
