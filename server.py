@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 朝の資金分析  ローカル Web サーバー
-iPhone など同一 Wi-Fi の端末から実行ボタンを押して改善版分析を起動する。
+iPhone など同一 Wi-Fi の端末から実行ボタンを押して資金分析を起動する。
 
 依存ライブラリなし(標準ライブラリのみ)。
 
@@ -131,7 +131,7 @@ PAGE = """<!doctype html>
   button.jp-holdings { background: #2ea043; }
   button.jp-holdings:active { background: #56d364; }
   button:disabled { background: #30363d !important; color: #8b949e; cursor: not-allowed; }
-  /* 改善版エリア(実験中) */
+  /* 資金分析エリア */
   .variants { display: flex; flex-wrap: wrap; gap: 12px; }
   .variants .placeholder { flex: 1; padding: 22px 14px; border: 1px dashed #30363d;
            border-radius: 14px; color: #6e7681; font-size: 13px; text-align: center; }
@@ -222,7 +222,7 @@ PAGE = """<!doctype html>
   </div>
 </header>
 <section>
-  <div class="sec-label">改善版分析</div>
+  <div class="sec-label">資金分析</div>
   <div class="btns">
     <button class="runbtn us" data-market="us">米国市場</button>
     <button class="runbtn jp" data-market="jp">日本市場</button>

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-改善版 資金分析  (variant = 'enhanced')
+資金分析  (variant = 'enhanced')
 ==================================================
-引け前30〜60分の候補抽出用。改善版をメイン表示し、下部に標準版参考を併記する。
+引け前30〜60分の候補抽出用。保有銘柄、新規候補、継続性確認を目的別に表示する。
 
 共通の当日フィルタ:
   当日加重Net = 超大口Net + 大口Net * 0.5
   通過条件   = 当日加重Net >= 0
 
-改善版メイン:
+保有銘柄・新規候補:
   過去5日条件 = median(超大口 + 大口) > 0
   ソート     = (超大口Net + 大口Net*0.5 - 小口Net*0.25) / 売買代金
   狙い       = 当日の売買代金に対して大口側が強く食い込んだ銘柄を上位表示する。
 
-標準版参考:
+継続性確認:
   過去5日条件 = 5日中4日以上、超大口 + 大口 > 0（件数不足時は全日プラス）
   ソート     = 超大口5日中央値 + 大口5日中央値*0.5 - 小口5日中央値*0.25
   狙い       = 継続的に大口側が入っている銘柄を上位表示する。
@@ -532,7 +532,7 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True,
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
     forecast_header = f" {'予想EPS/EPS':>11}" if show_forecast_eps_ratio else ''
-    header_str = f"{'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'MTR%':>7} {'Spread':>7}{pl_header}{forecast_header}"
+    header_str = f"{'Code':<10} {bear_header}{'当日食込%':>11} {'当日変化率%':>11} {'MTR%':>7} {'Spread':>7}{pl_header}{forecast_header}"
     print("    " + header_str)
     print("    " + "-" * len(header_str))
 
@@ -578,7 +578,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         show_standard_reference = False
     mode_label = '保有のみ' if holdings_only else '通常'
     print(f"\n{'='*78}")
-    print(f"  改善版 資金分析  {cfg['label']}  {mode_label}  {t0.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  資金分析  {cfg['label']}  {mode_label}  {t0.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*78}\n")
 
     # Step 1: 保有 + ウォッチリスト
@@ -790,7 +790,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
 
     # ハードフィルタ: 超大口&大口が売り越していない(当日 net≧0) + 大口5日中央値>0 + VWAP足切り。
     passers = []
-    passers_strict = []   # 標準版フィルタ② (4/5日プラス) を通過した銘柄
+    passers_strict = []   # 継続性フィルタ (4/5日プラス) を通過した銘柄
     mtr_cache = {}
 
     for c, r in results.items():
@@ -866,7 +866,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     except Exception:
         pass
 
-    print(f"         改善版通過: {len(passers)}銘柄  /  標準版通過: {len(passers_strict)}銘柄")
+    print(f"         新規候補通過: {len(passers)}銘柄  /  継続性通過: {len(passers_strict)}銘柄")
 
 
     # candidate 構築
@@ -1092,7 +1092,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         c = build(groups[g], etf=False)
         return c, len([x for x in groups[g] if not is_etf(x)])
 
-    # signals は従来の改善版1候補を維持する。表示対象とは分離する。
+    # signals は保有判断用候補を維持する。表示対象とは分離する。
     native_codes = set()
     for g in order:
         c, _ = _build_enhanced1_group(g)
@@ -1106,7 +1106,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             key=lambda x: x['sort_ingest_ratio'], reverse=True)
 
     if '保有銘柄' in groups:
-        _separator('保有銘柄（改善版: 保有継続/売却判断）')
+        _separator('保有銘柄（保有継続/売却判断）')
         c = group_cands.get('保有銘柄', [])
         _print_group('保有銘柄', c, top_n=5 if slim else None,
                      total=len(groups['保有銘柄']),
@@ -1117,7 +1117,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                           show_bear_etf=(market == 'us'))
 
     if not holdings_only:
-        _separator('新規候補（改善版2: 過熱補正あり）')
+        _separator('新規候補')
         if market == 'jp':
             etf_only = bool(_ETF_SET)
             if etf_only:
@@ -1161,7 +1161,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                                    show_forecast_eps_ratio=True)
 
     if show_standard_reference:
-        # ── 標準版結果(参考) ─────────────────────────────────────────────────────
+        # ── 継続性確認(参考) ─────────────────────────────────────────────────────
         strict_pass_map = {c: make(c, d, f, tov, vd, mtr) for c, d, f, tov, vd, mtr in passers_strict}
 
 
@@ -1170,7 +1170,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             out.sort(key=lambda x: x['standard_sort_med5'], reverse=True)
             return out
 
-        _separator('参考: 標準版（継続性確認）')
+        _separator('継続性確認（参考）')
         print("  フィルタ②: 4/5日プラス / ソート: 超大口5日中央値 + 大口5日中央値*0.5 - 小口5日中央値*0.25")
         if market == 'jp':
             for g in group_order:
@@ -1184,7 +1184,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                                key=lambda x: x['standard_sort_med5'], reverse=True)
                     total = len(groups[g])
                 _print_group(g, c, top_n=None if g == '保有銘柄' else top_n, total=total,
-                             score_key='standard_sort_med5', score_header='標準補正5d',
+                             score_key='standard_sort_med5', score_header='5日補正Net',
                              score_percent=False, show_bear_etf=False,
                              show_change_pct=holdings_only)
         else:
@@ -1195,7 +1195,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                     c.sort(key=lambda x: x['standard_sort_med5'], reverse=True)
                     native_codes_s.update(x['code'] for x in c)
                     _print_group(g, c, top_n=top_n, total=len(groups[g]),
-                                 score_key='standard_sort_med5', score_header='標準補正5d',
+                                 score_key='standard_sort_med5', score_header='5日補正Net',
                                  score_percent=False, show_change_pct=holdings_only,
                                  show_forecast_eps_ratio=True)
                 else:
@@ -1203,13 +1203,13 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                         c = build_strict(groups[g], etf=True) + build_strict(groups[g], etf=False)
                         c.sort(key=lambda x: x['standard_sort_med5'], reverse=True)
                         _print_group(g, c, top_n=None, total=len(groups[g]),
-                                     score_key='standard_sort_med5', score_header='標準補正5d',
+                                     score_key='standard_sort_med5', score_header='5日補正Net',
                                      score_percent=False, show_change_pct=holdings_only,
                                      show_forecast_eps_ratio=True)
                     else:
                         c = build_strict(groups[g], etf=False)
                         _print_group(g, c, top_n=top_n, total=len([x for x in groups[g] if not is_etf(x)]),
-                                     score_key='standard_sort_med5', score_header='標準補正5d',
+                                     score_key='standard_sort_med5', score_header='5日補正Net',
                                      score_percent=False, show_change_pct=holdings_only,
                                      show_forecast_eps_ratio=True)
             if not holdings_only:
@@ -1218,7 +1218,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                                     key=lambda x: x['standard_sort_med5'], reverse=True)
                 _print_group('ETF(参考・分散用)', etf_strict, top_n=None,
                              total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes_s),
-                             score_key='standard_sort_med5', score_header='標準補正5d',
+                             score_key='standard_sort_med5', score_header='5日補正Net',
                              score_percent=False, show_forecast_eps_ratio=True)
 
     if holdings_only:
@@ -1236,7 +1236,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
 
 
 if __name__ == '__main__':
-    ap = argparse.ArgumentParser(description='改善版 資金分析')
+    ap = argparse.ArgumentParser(description='資金分析')
     ap.add_argument('--market', choices=['us', 'jp'], required=True)
     ap.add_argument('--top', type=int, default=5)
     ap.add_argument('--workers', type=int, default=4)
@@ -1244,7 +1244,7 @@ if __name__ == '__main__':
     ap.add_argument('--market-window', action='store_true',
                     help='米国市場はNY 15:00-15:59の時だけ実行する(定期実行用)')
     ap.add_argument('--hide-standard-reference', action='store_true',
-                    help='参考の標準版条件結果を下部に表示しない')
+                    help='継続性確認の結果を下部に表示しない')
     ap.add_argument('--holdings-only', action='store_true',
                     help='保有銘柄のみを分析し、signals.csv には追記しない')
     ap.add_argument('--slim', action='store_true',
