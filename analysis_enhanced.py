@@ -22,7 +22,6 @@
   - ベアETF: 米国個別株のみ、対応しそうなベアETFコードを参考表示
   - 平均乖離%: last_price / avg_price - 1（表示のみ）
   - 時間外%: 米国のみ、時間外価格と通常終値の乖離（表示のみ）
-  - 小口過熱: 当日の小口Netが超大口Net + 大口Netを上回る場合に警告
   - 保有銘柄・売却注意: 当日補正Net <= 0 かつ過去フロー悪化時に別枠表示
 
 保有銘柄:
@@ -42,6 +41,7 @@ import urllib.request
 import pandas as pd
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from moomoo.common.pb import Qot_Common_pb2
 
 sys.path.insert(0, '/Users/masaru/.claude/skills/moomooapi/scripts')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -475,7 +475,8 @@ def _worker(codes_slice):
 
 def _print_group(label, cands, top_n, total,
                  score_key='sort_ingest_ratio', score_header='補正食込%',
-                 score_percent=True, show_bear_etf=True, show_change_pct=False):
+                 score_percent=True, show_bear_etf=True, show_change_pct=False,
+                 show_forecast_eps_ratio=False):
     display = cands if top_n is None else cands[:top_n]
     suffix = '全件' if top_n is None else f'TOP{top_n}'
     print(f"\n  【{label}】{suffix}  ({len(cands)}銘柄合格 / {total}銘柄中)")
@@ -486,12 +487,13 @@ def _print_group(label, cands, top_n, total,
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     change_header = f" {'前日比%':>9}" if show_change_pct else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
-    extra_header = f" {'MTR%':>7} {'Spread':>7}"
+    forecast_header = f" {'予想EPS/EPS':>11}" if show_forecast_eps_ratio else ''
+    extra_header = f" {'MTR%':>7} {'Spread':>7}{forecast_header}"
 
     if score_percent:
-        header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header}{extra_header} {'小口過熱':>7}"
+        header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header}{extra_header}"
     else:
-        header_str = f"{'Code':<10} {bear_header}{'小口過熱':>7} {score_header:>11}{change_header}{pl_header}{extra_header}"
+        header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header}{extra_header}"
     print("    " + header_str)
     print("    " + "-" * len(header_str))
 
@@ -507,18 +509,19 @@ def _print_group(label, cands, top_n, total,
 
         sp = r.get('spread_pct')
         sp_str = f"{sp:.2f}%" if sp is not None else '  N/A'
-        sp_warn = '⚠SP' if sp is not None and sp >= 0.5 else ''
-        hot_str = ' '.join(filter(None, ['⚠' if r.get('small_dom') else '', sp_warn]))
         mtr_pct = r.get('mtr_pct', 0.0)
-        extra_s = f" {mtr_pct:>6.2f}% {sp_str:>7}"
+        forecast_ratio = r.get('forecast_eps_ratio')
+        forecast_s = f" {forecast_ratio:>11.3f}" if forecast_ratio is not None else "          --"
+        extra_s = f" {mtr_pct:>6.2f}% {sp_str:>7}{forecast_s if show_forecast_eps_ratio else ''}"
 
         if score_percent:
-            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s}{extra_s} {hot_str:>7}")
+            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s}{extra_s}")
         else:
-            print(f"    {r['code']:<10} {bear_s}{hot_str:>7} {score_s}{change_s}{pl_s}{extra_s}")
+            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s}{extra_s}")
 
 
-def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
+def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True,
+                           show_forecast_eps_ratio=False):
     display = cands if top_n is None else cands[:top_n]
     suffix = '全件' if top_n is None else f'TOP{top_n}'
     print(f"\n  【{label}】{suffix}  ({len(cands)}銘柄合格 / {total}銘柄中)")
@@ -528,13 +531,12 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
     is_holdings = (label == '保有銘柄')
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
-
-    header_str = f"{'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'MTR%':>7} {'Spread':>7}{pl_header} {'小口過熱':>7}"
+    forecast_header = f" {'予想EPS/EPS':>11}" if show_forecast_eps_ratio else ''
+    header_str = f"{'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'MTR%':>7} {'Spread':>7}{pl_header}{forecast_header}"
     print("    " + header_str)
     print("    " + "-" * len(header_str))
 
     for r in display:
-        hot = '⚠' if r.get('small_dom') else ''
         bear_s = f"{(r.get('bear_etf_code') or '--'):>8} " if show_bear_etf else ''
 
         pl_val = r.get('pl_ratio', 0.0)
@@ -543,13 +545,13 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
 
         sp = r.get('spread_pct')
         sp_str = f"{sp:.2f}%" if sp is not None else '  N/A'
-        sp_warn = '⚠SP' if sp is not None and sp >= 0.5 else ''
-        hot_str = ' '.join(filter(None, ['⚠' if r.get('small_dom') else '', sp_warn]))
+        forecast_ratio = r.get('forecast_eps_ratio')
+        forecast_s = f" {forecast_ratio:>11.3f}" if forecast_ratio is not None else "          --"
 
         print(f"    {r['code']:<10} {bear_s}"
               f"{r.get('enhanced2_score', 0.0):>11.3f} "
               f"{r.get('today_change_pct', 0.0):>11.3f} "
-              f"{r.get('mtr_pct', 0.0):>6.2f}% {sp_str:>7}{pl_s} {hot_str:>7}")
+              f"{r.get('mtr_pct', 0.0):>6.2f}% {sp_str:>7}{pl_s}{forecast_s if show_forecast_eps_ratio else ''}")
 
 
 def _print_sell_watch(cands, total, show_bear_etf=True):
@@ -733,7 +735,6 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
 
     if market == 'us':
         macro_indicators = [
-            'US.HYG', 'US.TLT', 'US.VIX',
             'US.XLK', 'US.XLF', 'US.XLV', 'US.XLE', 'US.XLY', 'US.XLP',
             'US.XLB', 'US.XLU', 'US.XLRE', 'US.XLC', 'US.IYT'
         ]
@@ -837,6 +838,29 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         if is_holding or f.get('ok_strict'):
             passers_strict.append((c, d, f, tov, avg_price_dev, mtr))
 
+    forecast_eps_ratio_map = {}
+    if market == 'us':
+        valuation_targets = sorted({
+            c for c, _, _, _, _, _ in passers
+            if not is_etf(c)
+        })
+        for code in valuation_targets:
+            try:
+                ret_val, valuation = q.get_valuation_detail(
+                    code,
+                    valuation_type=Qot_Common_pb2.ValuationType_PE,
+                )
+                time.sleep(0.1)
+                if ret_val != RET_OK:
+                    continue
+                trend = valuation.get('trend') or {}
+                current_pe = trend.get('current_value')
+                forward_pe = trend.get('forward_value')
+                if current_pe and forward_pe and forward_pe > 0:
+                    forecast_eps_ratio_map[code] = float(current_pe) / float(forward_pe)
+            except Exception:
+                continue
+
     try:
         q.close()
     except Exception:
@@ -892,6 +916,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             'mtr': mtr,
             'mtr_pct': (mtr / last * 100) if last > 0 else 0.0,
             'spread_pct': ((info.get('ask_price') or 0) - (info.get('bid_price') or 0)) / (((info.get('ask_price') or 0) + (info.get('bid_price') or 0)) / 2) * 100 if (info.get('bid_price') or 0) > 0 and (info.get('ask_price') or 0) > 0 else None,
+            'forecast_eps_ratio': forecast_eps_ratio_map.get(c),
         }
 
     pass_map = {c: make(c, d, f, tov, vd, mtr) for c, d, f, tov, vd, mtr in passers}
@@ -940,64 +965,6 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     print(f"\n{'='*78}")
     print(f"  分析結果  {cfg['label']}  ({datetime.now().strftime('%H:%M:%S')}  経過: {elapsed:.0f}秒)")
     print(f"{'='*78}")
-
-    # --- FRED Net Liquidity Calculation (Common) ---
-    net_liquidity_str = "N/A"
-    try:
-        walcl = _get_fred_data_with_cache('WALCL')
-        wdtgal = _get_fred_data_with_cache('WDTGAL')
-        rrp = _get_fred_data_with_cache('RRPONTSYD')
-        
-        # Intersection of Wednesday dates
-        wednesday_dates = []
-        for d_str in set(walcl.keys()) & set(wdtgal.keys()):
-            try:
-                d = datetime.strptime(d_str, '%Y-%m-%d').date()
-                if d.weekday() == 2: # Wednesday
-                    wednesday_dates.append(d)
-            except ValueError:
-                pass
-        wednesday_dates.sort()
-        
-        if wednesday_dates:
-            latest_wed = wednesday_dates[-1]
-            prev_wed = latest_wed - timedelta(days=7)
-            
-            def get_rrp_value(date_obj, rrp_dict):
-                d_str = date_obj.strftime('%Y-%m-%d')
-                if d_str in rrp_dict:
-                    return rrp_dict[d_str]
-                for i in range(1, 8):
-                    prev_date = date_obj - timedelta(days=i)
-                    prev_str = prev_date.strftime('%Y-%m-%d')
-                    if prev_str in rrp_dict:
-                        return rrp_dict[prev_str]
-                return None
-
-            w_latest = walcl.get(latest_wed.strftime('%Y-%m-%d'))
-            tg_latest = wdtgal.get(latest_wed.strftime('%Y-%m-%d'))
-            rrp_latest = get_rrp_value(latest_wed, rrp)
-            
-            w_prev = walcl.get(prev_wed.strftime('%Y-%m-%d'))
-            tg_prev = wdtgal.get(prev_wed.strftime('%Y-%m-%d'))
-            rrp_prev = get_rrp_value(prev_wed, rrp)
-            
-            if w_latest is not None and tg_latest is not None and rrp_latest is not None:
-                net_latest = w_latest - tg_latest - (rrp_latest * 1000.0)
-                net_latest_trillions = net_latest / 1000000.0
-                
-                if w_prev is not None and tg_prev is not None and rrp_prev is not None:
-                    net_prev = w_prev - tg_prev - (rrp_prev * 1000.0)
-                    change_billions = (net_latest - net_prev) / 1000.0
-                    net_liquidity_str = f"{net_latest_trillions:.2f} Trillion (Weekly Change: {change_billions:+.2f} Billion)"
-                else:
-                    net_liquidity_str = f"{net_latest_trillions:.2f} Trillion (Weekly Change: N/A)"
-            else:
-                net_liquidity_str = "N/A"
-        else:
-            net_liquidity_str = "N/A"
-    except Exception as e:
-        net_liquidity_str = f"Error ({e})"
 
     # --- NAAIM Exposure Index Calculation ---
     naaim_str = "N/A"
@@ -1061,44 +1028,14 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         else:
             sector_category = "流動性逼迫（本命集中・資金引き揚げ）"
 
-        # --- VIX & Risk-On ---
-        vix_info = snap_info.get('US.VIX')
-        vix_str = f"{vix_info['last']:.2f}" if vix_info and vix_info.get('last') is not None else "N/A"
-        
-        hyg = snap_info.get('US.HYG')
-        tlt = snap_info.get('US.TLT')
-        if hyg and tlt and hyg.get('last') and tlt.get('last'):
-            risk_on_ratio = hyg['last'] / tlt['last']
-            risk_on_change = (hyg.get('today_change_pct') or 0.0) - (tlt.get('today_change_pct') or 0.0)
-            risk_on_label = "資金流入傾向" if risk_on_change > 0 else "資金引き揚げ傾向"
-            sign = "+" if risk_on_change > 0 else ""
-            risk_on_str = f"{risk_on_ratio:.4f} (变化幅: {sign}{risk_on_change:.2f}%, {risk_on_label})"
-        else:
-            risk_on_str = "N/A"
-
         print("  [マクロ指標・市場流動性]")
-        print(f"    US Net Liquidity   : {net_liquidity_str}")
-        print("                        (目安: 5.8兆$前後が現在の基準値。週次数十Billion$以上の急減は株式下落を警戒)")
         print(f"    NAAIM Exposure     : {naaim_str}")
         print("                        (NAAIM上昇: 株式リスク増, 低下: ヘッジ増, 極端に高(>=80%): 買い余力低下, 極端に低(<=40%): リスク削減済)")
         print(f"    FMS Cash Level     : {fms_str}")
         print("                        (目安: 5.0%以上で底値圏・買いシグナル、4.0%以下で過熱・売りシグナル)")
         print(f"    Sector VWAP Breadth: {sector_breadth:.1f}% ({sector_category})")
-        print(f"    Risk-On Ratio      : {risk_on_str}")
-        print(f"    VIX Index          : {vix_str}")
         print(f"{'='*78}")
     else:
-        jp2516 = snap_info.get('JP.2516')
-        jp1306 = snap_info.get('JP.1306')
-        if jp2516 and jp1306 and jp2516.get('last') and jp1306.get('last'):
-            risk_on_ratio = jp2516['last'] / jp1306['last']
-            risk_on_change = (jp2516.get('today_change_pct') or 0.0) - (jp1306.get('today_change_pct') or 0.0)
-            risk_on_label = "新興物色・リスクオン" if risk_on_change > 0 else "新興売却・ディフェンシブ"
-            sign = "+" if risk_on_change > 0 else ""
-            risk_on_str = f"{risk_on_ratio:.4f} (JP.2516/JP.1306, 変化幅: {sign}{risk_on_change:.2f}%, {risk_on_label})"
-        else:
-            risk_on_str = "N/A"
-            
         non_etfs = [c for c in all_codes if not is_etf(c)]
         valid_non_etfs = [c for c in non_etfs if c in snap_info and snap_info[c].get('last') is not None and snap_info[c].get('avg_price') is not None]
         if valid_non_etfs:
@@ -1115,15 +1052,12 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             breadth_category = "流動性逼迫（本命集中・資金引き揚げ）"
 
         print("  [マクロ指標・世界流動性]")
-        print(f"    US Net Liquidity  : {net_liquidity_str}")
-        print("                       (目安: 5.8兆$前後が現在の基準値。週次数十Billion$以上の急減は株式下落を警戒)")
         print(f"    NAAIM Exposure    : {naaim_str}")
         print("                       (NAAIM上昇: 株式リスク増, 低下: ヘッジ増, 極端に高(>=80%): 買い余力低下, 極端に低(<=40%): リスク削減済)")
         print(f"    FMS Cash Level    : {fms_str}")
         print("                       (目安: 5.0%以上で底値圏・買いシグナル、4.0%以下で過熱・売りシグナル)")
         print("  [市場流動性分析]")
         print(f"    VWAP Breadth  : {vwap_breadth:.1f}% ({breadth_category})")
-        print(f"    Risk-On Ratio : {risk_on_str}")
         print(f"{'='*78}")
 
     group_cands = {}
@@ -1177,7 +1111,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         _print_group('保有銘柄', c, top_n=5 if slim else None,
                      total=len(groups['保有銘柄']),
                      show_bear_etf=(market == 'us'),
-                     show_change_pct=holdings_only)
+                     show_change_pct=holdings_only,
+                     show_forecast_eps_ratio=(market == 'us'))
         _print_sell_watch(sell_watch, total=len(groups['保有銘柄']),
                           show_bear_etf=(market == 'us'))
 
@@ -1204,13 +1139,15 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                     c.sort(key=lambda x: x['enhanced2_score'], reverse=True)
                     native_codes_e2.update(x['code'] for x in c)
                     _print_group_enhanced2(g, c, top_n=3 if slim else top_n,
-                                           total=len([x for x in groups[g] if x not in holding_codes]))
+                                           total=len([x for x in groups[g] if x not in holding_codes]),
+                                           show_forecast_eps_ratio=True)
                 else:
                     c = build_enhanced2(groups[g], etf=False)
                     c = [r for r in c if r['code'] not in holding_codes]
                     _print_group_enhanced2(g, c, top_n=3 if slim else top_n,
                                            total=len([x for x in groups[g]
-                                                      if not is_etf(x) and x not in holding_codes]))
+                                                      if not is_etf(x) and x not in holding_codes]),
+                                           show_forecast_eps_ratio=True)
             etf_pass_e2 = sorted([v for v in pass_map.values()
                                   if v['is_etf']
                                   and v['code'] not in native_codes_e2
@@ -1220,7 +1157,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                                    total=sum(1 for c in all_codes
                                              if is_etf(c)
                                              and c not in native_codes_e2
-                                             and c not in holding_codes))
+                                             and c not in holding_codes),
+                                   show_forecast_eps_ratio=True)
 
     if show_standard_reference:
         # ── 標準版結果(参考) ─────────────────────────────────────────────────────
@@ -1258,26 +1196,30 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                     native_codes_s.update(x['code'] for x in c)
                     _print_group(g, c, top_n=top_n, total=len(groups[g]),
                                  score_key='standard_sort_med5', score_header='標準補正5d',
-                                 score_percent=False, show_change_pct=holdings_only)
+                                 score_percent=False, show_change_pct=holdings_only,
+                                 show_forecast_eps_ratio=True)
                 else:
                     if g == '保有銘柄':
                         c = build_strict(groups[g], etf=True) + build_strict(groups[g], etf=False)
                         c.sort(key=lambda x: x['standard_sort_med5'], reverse=True)
                         _print_group(g, c, top_n=None, total=len(groups[g]),
                                      score_key='standard_sort_med5', score_header='標準補正5d',
-                                     score_percent=False, show_change_pct=holdings_only)
+                                     score_percent=False, show_change_pct=holdings_only,
+                                     show_forecast_eps_ratio=True)
                     else:
                         c = build_strict(groups[g], etf=False)
                         _print_group(g, c, top_n=top_n, total=len([x for x in groups[g] if not is_etf(x)]),
                                      score_key='standard_sort_med5', score_header='標準補正5d',
-                                     score_percent=False, show_change_pct=holdings_only)
+                                     score_percent=False, show_change_pct=holdings_only,
+                                     show_forecast_eps_ratio=True)
             if not holdings_only:
                 etf_strict = sorted([v for v in strict_pass_map.values()
                                      if v['is_etf'] and v['code'] not in native_codes_s],
                                     key=lambda x: x['standard_sort_med5'], reverse=True)
                 _print_group('ETF(参考・分散用)', etf_strict, top_n=None,
                              total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes_s),
-                             score_key='standard_sort_med5', score_header='標準補正5d', score_percent=False)
+                             score_key='standard_sort_med5', score_header='標準補正5d',
+                             score_percent=False, show_forecast_eps_ratio=True)
 
     if holdings_only:
         print("\n  [signals] 保有のみ分析のためCSV追記をスキップ")

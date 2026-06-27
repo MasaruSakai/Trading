@@ -25,6 +25,7 @@
 
 ## Context efficiency
 
+- Unless the user explicitly says otherwise, treat analysis and logic discussions as moomoo-side topics by default.
 - Read only relevant file sections and limit command output.
 - Do not create a subagent for a deterministic one-step operation.
 - Do not duplicate detailed implementation notes across chat, handover documents, and pull request descriptions.
