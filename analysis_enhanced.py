@@ -22,7 +22,6 @@
   - ベアETF: 米国個別株のみ、対応しそうなベアETFコードを参考表示
   - 平均乖離%: last_price / avg_price - 1（表示のみ）
   - 時間外%: 米国のみ、時間外価格と通常終値の乖離（表示のみ）
-  - 小口過熱: 当日の小口Netが超大口Net + 大口Netを上回る場合に警告
   - 保有銘柄・売却注意: 当日補正Net <= 0 かつ過去フロー悪化時に別枠表示
 
 保有銘柄:
@@ -42,6 +41,7 @@ import urllib.request
 import pandas as pd
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from moomoo.common.pb import Qot_Common_pb2
 
 sys.path.insert(0, '/Users/masaru/.claude/skills/moomooapi/scripts')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -474,7 +474,8 @@ def _worker(codes_slice):
 
 def _print_group(label, cands, top_n, total,
                  score_key='sort_ingest_ratio', score_header='補正食込%',
-                 score_percent=True, show_bear_etf=True, show_change_pct=False):
+                 score_percent=True, show_bear_etf=True, show_change_pct=False,
+                 show_forecast_eps_ratio=False):
     display = cands if top_n is None else cands[:top_n]
     suffix = '全件' if top_n is None else f'TOP{top_n}'
     print(f"\n  【{label}】{suffix}  ({len(cands)}銘柄合格 / {total}銘柄中)")
@@ -485,12 +486,13 @@ def _print_group(label, cands, top_n, total,
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     change_header = f" {'前日比%':>9}" if show_change_pct else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
-    extra_header = f" {'MTR%':>7} {'Spread':>7}"
+    forecast_header = f" {'予想EPS/EPS':>11}" if show_forecast_eps_ratio else ''
+    extra_header = f" {'MTR%':>7} {'Spread':>7}{forecast_header}"
 
     if score_percent:
-        header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header}{extra_header} {'小口過熱':>7}"
+        header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header}{extra_header}"
     else:
-        header_str = f"{'Code':<10} {bear_header}{'小口過熱':>7} {score_header:>11}{change_header}{pl_header}{extra_header}"
+        header_str = f"{'Code':<10} {bear_header}{score_header:>11}{change_header}{pl_header}{extra_header}"
     print("    " + header_str)
     print("    " + "-" * len(header_str))
 
@@ -506,18 +508,19 @@ def _print_group(label, cands, top_n, total,
 
         sp = r.get('spread_pct')
         sp_str = f"{sp:.2f}%" if sp is not None else '  N/A'
-        sp_warn = '⚠SP' if sp is not None and sp >= 0.5 else ''
-        hot_str = ' '.join(filter(None, ['⚠' if r.get('small_dom') else '', sp_warn]))
         mtr_pct = r.get('mtr_pct', 0.0)
-        extra_s = f" {mtr_pct:>6.2f}% {sp_str:>7}"
+        forecast_ratio = r.get('forecast_eps_ratio')
+        forecast_s = f" {forecast_ratio:>11.3f}" if forecast_ratio is not None else "          --"
+        extra_s = f" {mtr_pct:>6.2f}% {sp_str:>7}{forecast_s if show_forecast_eps_ratio else ''}"
 
         if score_percent:
-            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s}{extra_s} {hot_str:>7}")
+            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s}{extra_s}")
         else:
-            print(f"    {r['code']:<10} {bear_s}{hot_str:>7} {score_s}{change_s}{pl_s}{extra_s}")
+            print(f"    {r['code']:<10} {bear_s}{score_s}{change_s}{pl_s}{extra_s}")
 
 
-def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
+def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True,
+                           show_forecast_eps_ratio=False):
     display = cands if top_n is None else cands[:top_n]
     suffix = '全件' if top_n is None else f'TOP{top_n}'
     print(f"\n  【{label}】{suffix}  ({len(cands)}銘柄合格 / {total}銘柄中)")
@@ -527,13 +530,12 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
     is_holdings = (label == '保有銘柄')
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
-
-    header_str = f"{'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'MTR%':>7} {'Spread':>7}{pl_header} {'小口過熱':>7}"
+    forecast_header = f" {'予想EPS/EPS':>11}" if show_forecast_eps_ratio else ''
+    header_str = f"{'Code':<10} {bear_header}{'改善2':>11} {'当日変化率%':>11} {'MTR%':>7} {'Spread':>7}{pl_header}{forecast_header}"
     print("    " + header_str)
     print("    " + "-" * len(header_str))
 
     for r in display:
-        hot = '⚠' if r.get('small_dom') else ''
         bear_s = f"{(r.get('bear_etf_code') or '--'):>8} " if show_bear_etf else ''
 
         pl_val = r.get('pl_ratio', 0.0)
@@ -542,13 +544,13 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True):
 
         sp = r.get('spread_pct')
         sp_str = f"{sp:.2f}%" if sp is not None else '  N/A'
-        sp_warn = '⚠SP' if sp is not None and sp >= 0.5 else ''
-        hot_str = ' '.join(filter(None, ['⚠' if r.get('small_dom') else '', sp_warn]))
+        forecast_ratio = r.get('forecast_eps_ratio')
+        forecast_s = f" {forecast_ratio:>11.3f}" if forecast_ratio is not None else "          --"
 
         print(f"    {r['code']:<10} {bear_s}"
               f"{r.get('enhanced2_score', 0.0):>11.3f} "
               f"{r.get('today_change_pct', 0.0):>11.3f} "
-              f"{r.get('mtr_pct', 0.0):>6.2f}% {sp_str:>7}{pl_s} {hot_str:>7}")
+              f"{r.get('mtr_pct', 0.0):>6.2f}% {sp_str:>7}{pl_s}{forecast_s if show_forecast_eps_ratio else ''}")
 
 
 def _print_sell_watch(cands, total, show_bear_etf=True):
@@ -828,6 +830,29 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         if is_holding or f.get('ok_strict'):
             passers_strict.append((c, d, f, tov, avg_price_dev, mtr))
 
+    forecast_eps_ratio_map = {}
+    if market == 'us':
+        valuation_targets = sorted({
+            c for c, _, _, _, _, _ in passers
+            if not is_etf(c)
+        })
+        for code in valuation_targets:
+            try:
+                ret_val, valuation = q.get_valuation_detail(
+                    code,
+                    valuation_type=Qot_Common_pb2.ValuationType_PE,
+                )
+                time.sleep(0.1)
+                if ret_val != RET_OK:
+                    continue
+                trend = valuation.get('trend') or {}
+                current_pe = trend.get('current_value')
+                forward_pe = trend.get('forward_value')
+                if current_pe and forward_pe and forward_pe > 0:
+                    forecast_eps_ratio_map[code] = float(current_pe) / float(forward_pe)
+            except Exception:
+                continue
+
     try:
         q.close()
     except Exception:
@@ -900,6 +925,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             'mtr': mtr,
             'mtr_pct': (mtr / last * 100) if last > 0 else 0.0,
             'spread_pct': ((info.get('ask_price') or 0) - (info.get('bid_price') or 0)) / (((info.get('ask_price') or 0) + (info.get('bid_price') or 0)) / 2) * 100 if (info.get('bid_price') or 0) > 0 and (info.get('ask_price') or 0) > 0 else None,
+            'forecast_eps_ratio': forecast_eps_ratio_map.get(c),
         }
 
     pass_map = {c: make(c, d, f, tov, vd, mtr) for c, d, f, tov, vd, mtr in passers}
@@ -1094,7 +1120,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         _print_group('保有銘柄', c, top_n=5 if slim else None,
                      total=len(groups['保有銘柄']),
                      show_bear_etf=(market == 'us'),
-                     show_change_pct=holdings_only)
+                     show_change_pct=holdings_only,
+                     show_forecast_eps_ratio=(market == 'us'))
         _print_sell_watch(sell_watch, total=len(groups['保有銘柄']),
                           show_bear_etf=(market == 'us'))
 
@@ -1121,13 +1148,15 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                     c.sort(key=lambda x: x['enhanced2_score'], reverse=True)
                     native_codes_e2.update(x['code'] for x in c)
                     _print_group_enhanced2(g, c, top_n=3 if slim else top_n,
-                                           total=len([x for x in groups[g] if x not in holding_codes]))
+                                           total=len([x for x in groups[g] if x not in holding_codes]),
+                                           show_forecast_eps_ratio=True)
                 else:
                     c = build_enhanced2(groups[g], etf=False)
                     c = [r for r in c if r['code'] not in holding_codes]
                     _print_group_enhanced2(g, c, top_n=3 if slim else top_n,
                                            total=len([x for x in groups[g]
-                                                      if not is_etf(x) and x not in holding_codes]))
+                                                      if not is_etf(x) and x not in holding_codes]),
+                                           show_forecast_eps_ratio=True)
             etf_pass_e2 = sorted([v for v in pass_map.values()
                                   if v['is_etf']
                                   and v['code'] not in native_codes_e2
@@ -1137,7 +1166,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                                    total=sum(1 for c in all_codes
                                              if is_etf(c)
                                              and c not in native_codes_e2
-                                             and c not in holding_codes))
+                                             and c not in holding_codes),
+                                   show_forecast_eps_ratio=True)
 
     if show_standard_reference:
         # ── 標準版結果(参考) ─────────────────────────────────────────────────────
@@ -1175,26 +1205,30 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                     native_codes_s.update(x['code'] for x in c)
                     _print_group(g, c, top_n=top_n, total=len(groups[g]),
                                  score_key='standard_sort_med5', score_header='標準補正5d',
-                                 score_percent=False, show_change_pct=holdings_only)
+                                 score_percent=False, show_change_pct=holdings_only,
+                                 show_forecast_eps_ratio=True)
                 else:
                     if g == '保有銘柄':
                         c = build_strict(groups[g], etf=True) + build_strict(groups[g], etf=False)
                         c.sort(key=lambda x: x['standard_sort_med5'], reverse=True)
                         _print_group(g, c, top_n=None, total=len(groups[g]),
                                      score_key='standard_sort_med5', score_header='標準補正5d',
-                                     score_percent=False, show_change_pct=holdings_only)
+                                     score_percent=False, show_change_pct=holdings_only,
+                                     show_forecast_eps_ratio=True)
                     else:
                         c = build_strict(groups[g], etf=False)
                         _print_group(g, c, top_n=top_n, total=len([x for x in groups[g] if not is_etf(x)]),
                                      score_key='standard_sort_med5', score_header='標準補正5d',
-                                     score_percent=False, show_change_pct=holdings_only)
+                                     score_percent=False, show_change_pct=holdings_only,
+                                     show_forecast_eps_ratio=True)
             if not holdings_only:
                 etf_strict = sorted([v for v in strict_pass_map.values()
                                      if v['is_etf'] and v['code'] not in native_codes_s],
                                     key=lambda x: x['standard_sort_med5'], reverse=True)
                 _print_group('ETF(参考・分散用)', etf_strict, top_n=None,
                              total=sum(1 for c in all_codes if is_etf(c) and c not in native_codes_s),
-                             score_key='standard_sort_med5', score_header='標準補正5d', score_percent=False)
+                             score_key='standard_sort_med5', score_header='標準補正5d',
+                             score_percent=False, show_forecast_eps_ratio=True)
 
     if holdings_only:
         print("\n  [signals] 保有のみ分析のためCSV追記をスキップ")
