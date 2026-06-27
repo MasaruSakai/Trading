@@ -513,6 +513,57 @@ def _get_us_market_session():
         return 'OVERNIGHT'
 
 
+def _us_vwap_window():
+    """Return the regular-session date and whether to freeze the 15:00-16:00 ET window."""
+    et = datetime.now(ZoneInfo('America/New_York'))
+    target = et.date()
+    if et.weekday() >= 5 or et.strftime('%H:%M') < '09:30':
+        target -= timedelta(days=1)
+        while target.weekday() >= 5:
+            target -= timedelta(days=1)
+    return target.strftime('%Y-%m-%d'), _get_us_market_session() != 'REGULAR'
+
+
+def _get_vwap_above_ratio_60m(quote_ctx, code, target_date, fixed_close_window):
+    """Calculate the share of selected 1-minute closes above cumulative regular-session VWAP."""
+    try:
+        ret, data, _ = quote_ctx.request_history_kline(
+            code,
+            start=target_date,
+            end=target_date,
+            ktype='K_1M',
+            autype='qfq',
+            max_count=1000,
+        )
+        time.sleep(0.1)
+        if ret != RET_OK or data.empty:
+            return None
+
+        frame = data.copy()
+        frame['time_key'] = pd.to_datetime(frame['time_key'], errors='coerce')
+        frame['volume'] = pd.to_numeric(frame['volume'], errors='coerce')
+        frame['turnover'] = pd.to_numeric(frame['turnover'], errors='coerce')
+        frame['close'] = pd.to_numeric(frame['close'], errors='coerce')
+        frame = frame.dropna(subset=['time_key', 'volume', 'turnover', 'close'])
+        minute = frame['time_key'].dt.strftime('%H:%M')
+        frame = frame[(minute >= '09:30') & (minute < '16:00') & (frame['volume'] > 0)].copy()
+        if frame.empty:
+            return None
+
+        frame['cum_vwap'] = frame['turnover'].cumsum() / frame['volume'].cumsum()
+        if fixed_close_window:
+            minute = frame['time_key'].dt.strftime('%H:%M')
+            window = frame[(minute >= '15:00') & (minute < '16:00')]
+        else:
+            window = frame.tail(60)
+        if window.empty:
+            return None
+        return float((window['close'] > window['cum_vwap']).mean() * 100.0)
+    except Exception as e:
+        print(f'  [VWAP上60%] {code} 取得失敗: {e}')
+        return None
+
+
 def _overheat_penalty(today_change_pct):
     over = max(abs(today_change_pct) - OVERHEAT_THRESHOLD_PCT, 0.0)
     return min(OVERHEAT_FACTOR * math.sqrt(over), OVERHEAT_CAP)
@@ -626,7 +677,8 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True,
     bear_header = f"{'ベアETF':>8} " if show_bear_etf else ''
     pl_header = f" {'含み益%':>9}" if is_holdings else ''
     forecast_header = f" {'予想EPS/EPS':>11}" if show_forecast_eps_ratio else ''
-    header_str = f"{'Code':<10} {bear_header}{'当日食込%':>11} {'当日変化率%':>11} {'MTR%':>7} {'Spread':>7}{pl_header}{forecast_header}"
+    vwap_header = f" {'VWAP上60%':>9}" if show_forecast_eps_ratio else ''
+    header_str = f"{'Code':<10} {bear_header}{'候補Score':>11}{vwap_header} {'当日変化率%':>11} {'MTR%':>7} {'Spread':>7}{pl_header}{forecast_header}"
     print("    " + header_str)
     print("    " + "-" * len(header_str))
 
@@ -641,9 +693,11 @@ def _print_group_enhanced2(label, cands, top_n, total, show_bear_etf=True,
         sp_str = f"{sp:.2f}%" if sp is not None else '  N/A'
         forecast_ratio = r.get('forecast_eps_ratio')
         forecast_s = f" {forecast_ratio:>11.3f}" if forecast_ratio is not None else "          --"
+        vwap_above = r.get('vwap_above_ratio_60m')
+        vwap_above_s = f" {vwap_above:>8.1f}%" if vwap_above is not None else "        --"
 
         print(f"    {r['code']:<10} {bear_s}"
-              f"{r.get('enhanced2_score', 0.0):>11.3f} "
+              f"{r.get('enhanced2_score', 0.0):>11.3f}{vwap_above_s if show_forecast_eps_ratio else ''} "
               f"{r.get('today_change_pct', 0.0):>11.3f} "
               f"{r.get('mtr_pct', 0.0):>6.2f}% {sp_str:>7}{pl_s}{forecast_s if show_forecast_eps_ratio else ''}")
 
@@ -886,6 +940,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     passers = []
     passers_strict = []   # 継続性フィルタ (4/5日プラス) を通過した銘柄
     mtr_cache = {}
+    vwap_above_ratio_map = {}
+    vwap_window_date, fixed_vwap_window = _us_vwap_window() if market == 'us' else ('', False)
 
     for c, r in results.items():
         d, f = r['dist'], r.get('flow') or {}
@@ -926,6 +982,11 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                 mtr_pct = (mtr / last) * 100
                 if spread_pct > mtr_pct:
                     continue  # 足切り
+
+            if market == 'us':
+                vwap_above_ratio_map[c] = _get_vwap_above_ratio_60m(
+                    q, c, vwap_window_date, fixed_vwap_window
+                )
                     
         avg_price_dev = (last / avg_price - 1.0) if avg_price > 0 else None   # 表示のみ
         passers.append((c, d, f, tov, avg_price_dev, mtr))
@@ -962,7 +1023,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     except Exception:
         pass
 
-    print(f"         新規候補通過: {len(passers)}銘柄  /  継続性通過: {len(passers_strict)}銘柄")
+    print(f"         前段フィルタ通過: {len(passers)}銘柄  /  継続性通過: {len(passers_strict)}銘柄")
 
 
     # candidate 構築
@@ -984,7 +1045,10 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             bonus = 100.0 * CAPITAL_GAINS_TAX_RATE * gain_ratio / (1.0 + gain_ratio)
 
         sort_ingest_ratio = (sort_weighted_net / tov) if tov > 0 else 0.0
+        vwap_above_ratio_60m = vwap_above_ratio_map.get(c)
         enhanced2_score = enhanced1_score_pct
+        if market == 'us' and c not in holding_codes and vwap_above_ratio_60m is not None:
+            enhanced2_score *= vwap_above_ratio_60m / 100.0
 
         sort_ingest_ratio += bonus / 100.0
         enhanced2_score += bonus
@@ -998,7 +1062,9 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             'ingest_ratio': (weighted_net / tov) if tov > 0 else 0.0,
             'sort_ingest_ratio': sort_ingest_ratio,
             'today_change_pct': info.get('today_change_pct', 0.0),
+            'enhanced1_score_pct': enhanced1_score_pct,
             'enhanced2_score': enhanced2_score,
+            'vwap_above_ratio_60m': vwap_above_ratio_60m,
             'big_med5': f.get('big_med5', 0.0),
             'big_component_med5': f.get('big_component_med5', 0.0),
             'small_med5': f.get('small_med5', 0.0),
@@ -1052,8 +1118,14 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         out.sort(key=lambda x: x['sort_ingest_ratio'], reverse=True)  # 小口を0.25逆方向に効かせた食い込み率
         return out
 
+    def is_new_candidate(r):
+        if r['enhanced1_score_pct'] <= 0:
+            return False
+        return market != 'us' or r['vwap_above_ratio_60m'] is not None
+
     def build_enhanced2(codes, etf):
         out = [pass_map[c] for c in codes if c in pass_map and bool(pass_map[c]['is_etf']) == etf]
+        out = [r for r in out if is_new_candidate(r)]
         out.sort(key=lambda x: x['enhanced2_score'], reverse=True)
         return out
 
@@ -1295,7 +1367,8 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             etf_pass_e2 = sorted([v for v in pass_map.values()
                                   if v['is_etf']
                                   and v['code'] not in native_codes_e2
-                                  and v['code'] not in holding_codes],
+                                  and v['code'] not in holding_codes
+                                  and is_new_candidate(v)],
                                  key=lambda x: x['enhanced2_score'], reverse=True)
             _print_group_enhanced2('ETF(参考・分散用)', etf_pass_e2, top_n=5 if slim else None,
                                    total=sum(1 for c in all_codes
