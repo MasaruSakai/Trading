@@ -57,6 +57,7 @@ SNAPSHOT_BATCH = 200
 OVERHEAT_THRESHOLD_PCT = 1.0
 OVERHEAT_FACTOR = 2.5
 OVERHEAT_CAP = 15.0
+CAPITAL_GAINS_TAX_RATE = 0.20315
 
 GDRIVE_LOG_DIR = {
     'us': '/Users/masaru/Library/CloudStorage/GoogleDrive-sbrmsj@gmail.com/マイドライブ/AssetManagement/米国logs',
@@ -890,8 +891,9 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
 
         pl_ratio = holding_pls.get(c, 0.0)
         bonus = 0.0
-        if c in holding_codes:
-            bonus = max(pl_ratio * 0.2, 0.0)
+        if c in holding_codes and pl_ratio > 0.0:
+            gain_ratio = pl_ratio / 100.0
+            bonus = 100.0 * CAPITAL_GAINS_TAX_RATE * gain_ratio / (1.0 + gain_ratio)
 
         sort_ingest_ratio = (sort_weighted_net / tov) if tov > 0 else 0.0
         
