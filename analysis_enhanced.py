@@ -332,7 +332,8 @@ def _get_gld_flow_4w(quote_ctx):
                 date_str = dates.iloc[-1].strftime('%Y-%m-%d')
         return {
             'date': date_str,
-            'net_flow': float(values.sum()),
+            'net_flow_1w': float(values.tail(5).sum()),
+            'net_flow_4w': float(values.sum()),
             'sessions': int(len(values)),
         }
     except Exception as e:
@@ -579,6 +580,113 @@ def _copy_to_gdrive(log_path, market):
         print(f"  [GDrive] コピー完了: {dest}")
     except Exception as e:
         print(f"  [GDrive] コピー失敗: {e}")
+
+
+def _format_usd_flow(value):
+    if abs(value) >= 1_000_000_000:
+        return f'{value / 1_000_000_000:+.2f}B USD'
+    return f'{value / 1_000_000:+.1f}M USD'
+
+
+def _print_macro_indicators(market, snap_info, all_codes, gld_flow):
+    naaim_str = 'N/A'
+    try:
+        naaim_data = _get_naaim_index_with_cache()
+        if naaim_data:
+            val = naaim_data[0]['value']
+            prev_val = naaim_data[1]['value'] if len(naaim_data) > 1 else None
+            if val >= 80.0:
+                level_label = '極端に高い (買い余力低下・過熱)'
+            elif val <= 40.0:
+                level_label = '極端に低い (既にリスク削減済・底値圏)'
+            else:
+                level_label = '中立'
+            if prev_val is not None:
+                change = val - prev_val
+                trend_label = 'リスク増加' if change > 0 else 'ヘッジ・ショート増加'
+                naaim_str = f'{val:.2f}% (前週比 {change:+.2f}pt, {level_label} | {trend_label})'
+            else:
+                naaim_str = f'{val:.2f}% ({level_label})'
+    except Exception as e:
+        naaim_str = f'Error ({e})'
+
+    fms_str = 'N/A'
+    try:
+        fms_data = _get_fms_cash_with_cache()
+        if fms_data:
+            latest = fms_data[0]
+            val = latest['value']
+            if val >= 5.0:
+                level_label = '過度な現金比率 (買い余力豊富・底値圏)'
+            elif val <= 4.0:
+                level_label = '過小な現金比率 (買い余力低下・過熱圏)'
+            else:
+                level_label = '平時 (4.0%〜5.0%の間)'
+            fms_str = f'{val:.2f}% ({latest["date"]}時点, {level_label})'
+    except Exception as e:
+        fms_str = f'Error ({e})'
+
+    if market == 'us':
+        real_yield_str = 'N/A'
+        try:
+            observations = sorted(_get_fred_data_with_cache('DFII10').items())
+            if observations:
+                latest_date, latest_value = observations[-1]
+                if len(observations) >= 6:
+                    change_5d = latest_value - observations[-6][1]
+                    direction = '追い風' if change_5d < 0 else '逆風' if change_5d > 0 else '中立'
+                    real_yield_str = f'{latest_value:.2f}% (5D {change_5d:+.2f}pt, {direction}, {latest_date})'
+                else:
+                    real_yield_str = f'{latest_value:.2f}% ({latest_date})'
+        except Exception as e:
+            real_yield_str = f'Error ({e})'
+
+        flow_1w_str = 'N/A'
+        flow_4w_str = 'N/A'
+        if gld_flow:
+            date_str = gld_flow.get('date') or '日付不明'
+            flow_1w = gld_flow['net_flow_1w']
+            flow_4w = gld_flow['net_flow_4w']
+            flow_1w_str = f'{_format_usd_flow(flow_1w)} ({"流入" if flow_1w > 0 else "流出" if flow_1w < 0 else "中立"}, {date_str})'
+            flow_4w_str = f'{_format_usd_flow(flow_4w)} ({"流入" if flow_4w > 0 else "流出" if flow_4w < 0 else "中立"}, {date_str})'
+
+        cftc_gold_str = 'N/A'
+        try:
+            cftc_gold = _get_cftc_gold_position_with_cache()
+            if cftc_gold:
+                percentile = cftc_gold['percentile']
+                position_label = '買い混雑' if percentile >= 90.0 else '買い余地大' if percentile <= 10.0 else '中立'
+                cftc_gold_str = (f'{cftc_gold["net_long"]:+,.0f} contracts '
+                                 f'(3Y {percentile:.1f}pct, {position_label}, {cftc_gold["date"]})')
+        except Exception as e:
+            cftc_gold_str = f'Error ({e})'
+
+        sector_etfs = ['US.XLK', 'US.XLF', 'US.XLV', 'US.XLE', 'US.XLY', 'US.XLP',
+                       'US.XLB', 'US.XLU', 'US.XLRE', 'US.XLC', 'US.IYT']
+        valid = [c for c in sector_etfs if c in snap_info and snap_info[c].get('last') is not None
+                 and snap_info[c].get('avg_price') is not None]
+        breadth = sum(1 for c in valid if snap_info[c]['last'] > snap_info[c]['avg_price']) / len(valid) * 100.0 if valid else 0.0
+        category = '流動性潤沢（リスクオン）' if breadth >= 60.0 else '流動性平時（選択的物色）' if breadth >= 40.0 else '流動性逼迫（本命集中・資金引き揚げ）'
+
+        print('\n  [マクロ指標・市場流動性]')
+        print(f'    NAAIM Exposure [週次]       : {naaim_str}')
+        print(f'    FMS Cash Level [月次]       : {fms_str}')
+        print(f'    Sector VWAP Breadth [日中]  : {breadth:.1f}% ({category})')
+        print(f'    US 10Y Real Yield [日次/5D] : {real_yield_str}')
+        print(f'    GLD Flow [1W/5営業日・proxy]: {flow_1w_str}')
+        print(f'    GLD Flow [4W/20営業日・proxy]: {flow_4w_str}')
+        print(f'    CFTC Gold Net Long [週次]   : {cftc_gold_str}')
+    else:
+        non_etfs = [c for c in all_codes if not is_etf(c)]
+        valid = [c for c in non_etfs if c in snap_info and snap_info[c].get('last') is not None
+                 and snap_info[c].get('avg_price') is not None]
+        breadth = sum(1 for c in valid if snap_info[c]['last'] > snap_info[c]['avg_price']) / len(valid) * 100.0 if valid else 0.0
+        category = '流動性潤沢（リスクオン）' if breadth >= 60.0 else '流動性平時（選択的物色）' if breadth >= 40.0 else '流動性逼迫（本命集中・資金引き揚げ）'
+        print('\n  [マクロ指標・世界流動性]')
+        print(f'    NAAIM Exposure [週次]      : {naaim_str}')
+        print(f'    FMS Cash Level [月次]      : {fms_str}')
+        print(f'    VWAP Breadth [日中]        : {breadth:.1f}% ({category})')
+    print(f"{'='*78}\n")
 
 
 def _check_us_market_window():
@@ -894,6 +1002,9 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         _snap(snap_targets[i:i + SNAPSHOT_BATCH])
     print(f"{len(all_codes)}銘柄ユニーク / snapshot {len(snap_info)}銘柄")
 
+    gld_flow = _get_gld_flow_4w(q) if market == 'us' else {}
+    _print_macro_indicators(market, snap_info, all_codes, gld_flow)
+
     # Step 3: 並列で 分布(当日) + 大口5日中央値
     print(f"  [3/3] {len(all_codes)}銘柄を分析中（保有銘柄優先処理＋{num_workers}並列）...", flush=True)
 
@@ -994,7 +1105,6 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             passers_strict.append((c, d, f, tov, avg_price_dev, mtr))
 
     forecast_eps_ratio_map = {}
-    gld_flow_4w = {}
     if market == 'us':
         valuation_targets = sorted({
             c for c, _, _, _, _, _ in passers
@@ -1016,7 +1126,6 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                     forecast_eps_ratio_map[code] = float(current_pe) / float(forward_pe)
             except Exception:
                 continue
-        gld_flow_4w = _get_gld_flow_4w(q)
 
     try:
         q.close()
@@ -1133,148 +1242,6 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     print(f"\n{'='*78}")
     print(f"  分析結果  {cfg['label']}  ({datetime.now().strftime('%H:%M:%S')}  経過: {elapsed:.0f}秒)")
     print(f"{'='*78}")
-
-    # --- NAAIM Exposure Index Calculation ---
-    naaim_str = "N/A"
-    try:
-        naaim_data = _get_naaim_index_with_cache()
-        if naaim_data:
-            latest = naaim_data[0]
-            val = latest["value"]
-            prev_val = naaim_data[1]["value"] if len(naaim_data) > 1 else None
-            
-            if val >= 80.0:
-                level_label = "極端に高い (買い余力低下・過熱)"
-            elif val <= 40.0:
-                level_label = "極端に低い (既にリスク削減済・底値圏)"
-            else:
-                level_label = "中立"
-                
-            if prev_val is not None:
-                change = val - prev_val
-                trend_label = "リスク増加" if change > 0 else "ヘッジ・ショート増加"
-                naaim_str = f"{val:.2f}% (Weekly Change: {change:+.2f}%, {level_label} | {trend_label})"
-            else:
-                naaim_str = f"{val:.2f}% ({level_label})"
-    except Exception as e:
-        naaim_str = f"Error ({e})"
-
-    # --- BofA FMS Cash Level ---
-    fms_str = "N/A"
-    try:
-        fms_data = _get_fms_cash_with_cache()
-        if fms_data:
-            latest = fms_data[0]
-            val = latest["value"]
-            date_str = latest["date"]
-            
-            if val >= 5.0:
-                level_label = "過度な現金比率 (買い余力豊富・底値圏)"
-            elif val <= 4.0:
-                level_label = "過小な現金比率 (買い余力低下・過熱圏)"
-            else:
-                level_label = "平時 (4.0%〜5.0%の間)"
-                
-            fms_str = f"{val:.2f}% ({date_str}時点, {level_label})"
-    except Exception as e:
-        fms_str = f"Error ({e})"
-
-    real_yield_str = 'N/A'
-    cftc_gold_str = 'N/A'
-    gld_flow_str = 'N/A'
-    if market == 'us':
-        try:
-            real_yield_data = _get_fred_data_with_cache('DFII10')
-            observations = sorted(real_yield_data.items())
-            if observations:
-                latest_date, latest_value = observations[-1]
-                if len(observations) >= 6:
-                    change_5d = latest_value - observations[-6][1]
-                    direction = '追い風' if change_5d < 0 else '逆風' if change_5d > 0 else '中立'
-                    real_yield_str = (f'{latest_value:.2f}% '
-                                      f'(5D {change_5d:+.2f}pt, {direction}, {latest_date})')
-                else:
-                    real_yield_str = f'{latest_value:.2f}% ({latest_date})'
-        except Exception as e:
-            real_yield_str = f'Error ({e})'
-
-        if gld_flow_4w:
-            net_flow = gld_flow_4w['net_flow']
-            if abs(net_flow) >= 1_000_000_000:
-                flow_value = f'{net_flow / 1_000_000_000:+.2f}B USD'
-            else:
-                flow_value = f'{net_flow / 1_000_000:+.1f}M USD'
-            flow_label = '流入' if net_flow > 0 else '流出' if net_flow < 0 else '中立'
-            gld_flow_str = (f'{flow_value} ({gld_flow_4w["sessions"]}営業日, '
-                            f'{flow_label}, {gld_flow_4w.get("date") or "日付不明"})')
-
-        try:
-            cftc_gold = _get_cftc_gold_position_with_cache()
-            if cftc_gold:
-                percentile = cftc_gold['percentile']
-                if percentile >= 90.0:
-                    position_label = '買い混雑'
-                elif percentile <= 10.0:
-                    position_label = '買い余地大'
-                else:
-                    position_label = '中立'
-                cftc_gold_str = (f'{cftc_gold["net_long"]:+,.0f} contracts '
-                                 f'(3Y {percentile:.1f}pct, {position_label}, '
-                                 f'{cftc_gold["date"]})')
-        except Exception as e:
-            cftc_gold_str = f'Error ({e})'
-
-    if market == 'us':
-        # --- Sector VWAP Breadth ---
-        sector_etfs = ['US.XLK', 'US.XLF', 'US.XLV', 'US.XLE', 'US.XLY', 'US.XLP', 'US.XLB', 'US.XLU', 'US.XLRE', 'US.XLC', 'US.IYT']
-        valid_sectors = [c for c in sector_etfs if c in snap_info and snap_info[c].get('last') is not None and snap_info[c].get('avg_price') is not None]
-        if valid_sectors:
-            above_vwap_sectors = sum(1 for c in valid_sectors if snap_info[c]['last'] > snap_info[c]['avg_price'])
-            sector_breadth = (above_vwap_sectors / len(valid_sectors)) * 100.0
-        else:
-            sector_breadth = 0.0
-
-        if sector_breadth >= 60.0:
-            sector_category = "流動性潤沢（リスクオン）"
-        elif sector_breadth >= 40.0:
-            sector_category = "流動性平時（選択的物色）"
-        else:
-            sector_category = "流動性逼迫（本命集中・資金引き揚げ）"
-
-        print("  [マクロ指標・市場流動性]")
-        print(f"    NAAIM Exposure     : {naaim_str}")
-        print("                        (NAAIM上昇: 株式リスク増, 低下: ヘッジ増, 極端に高(>=80%): 買い余力低下, 極端に低(<=40%): リスク削減済)")
-        print(f"    FMS Cash Level     : {fms_str}")
-        print("                        (目安: 5.0%以上で底値圏・買いシグナル、4.0%以下で過熱・売りシグナル)")
-        print(f"    Sector VWAP Breadth: {sector_breadth:.1f}% ({sector_category})")
-        print(f"    US 10Y Real Yield  : {real_yield_str}")
-        print(f"    GLD Flow 4W (proxy): {gld_flow_str}")
-        print(f"    CFTC Gold Net Long : {cftc_gold_str}")
-        print(f"{'='*78}")
-    else:
-        non_etfs = [c for c in all_codes if not is_etf(c)]
-        valid_non_etfs = [c for c in non_etfs if c in snap_info and snap_info[c].get('last') is not None and snap_info[c].get('avg_price') is not None]
-        if valid_non_etfs:
-            above_vwap = sum(1 for c in valid_non_etfs if snap_info[c]['last'] > snap_info[c]['avg_price'])
-            vwap_breadth = (above_vwap / len(valid_non_etfs)) * 100.0
-        else:
-            vwap_breadth = 0.0
-
-        if vwap_breadth >= 60.0:
-            breadth_category = "流動性潤沢（リスクオン）"
-        elif vwap_breadth >= 40.0:
-            breadth_category = "流動性平時（選択的物色）"
-        else:
-            breadth_category = "流動性逼迫（本命集中・資金引き揚げ）"
-
-        print("  [マクロ指標・世界流動性]")
-        print(f"    NAAIM Exposure    : {naaim_str}")
-        print("                       (NAAIM上昇: 株式リスク増, 低下: ヘッジ増, 極端に高(>=80%): 買い余力低下, 極端に低(<=40%): リスク削減済)")
-        print(f"    FMS Cash Level    : {fms_str}")
-        print("                       (目安: 5.0%以上で底値圏・買いシグナル、4.0%以下で過熱・売りシグナル)")
-        print("  [市場流動性分析]")
-        print(f"    VWAP Breadth  : {vwap_breadth:.1f}% ({breadth_category})")
-        print(f"{'='*78}")
 
     group_cands = {}
     order = group_order
