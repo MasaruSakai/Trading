@@ -37,7 +37,9 @@
 """
 import sys, time, argparse, os, re, math
 from datetime import datetime, timedelta
+import io
 import urllib.request
+import zipfile
 import pandas as pd
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -244,6 +246,98 @@ def _get_fred_data_with_cache(series_id, cache_dir='config/macro_cache'):
     except Exception as e:
         print(f"  [FRED] Error parsing cache file for {series_id}: {e}")
     return {}
+
+
+def _get_cftc_gold_position_with_cache(cache_dir='config/macro_cache'):
+    """Return the latest COMEX gold non-commercial net position and 3-year percentile."""
+    import json
+
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, 'CFTC_GOLD.json')
+    cache_max_age = 7 * 24 * 60 * 60
+
+    if os.path.exists(cache_path) and time.time() - os.path.getmtime(cache_path) < cache_max_age:
+        try:
+            with open(cache_path, encoding='utf-8') as fp:
+                return json.load(fp)
+        except Exception:
+            pass
+
+    try:
+        frames = []
+        current_year = datetime.now().year
+        for year in range(current_year - 2, current_year + 1):
+            url = f'https://www.cftc.gov/files/dea/history/deacot{year}.zip'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=20) as response:
+                payload = response.read()
+            with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+                filename = archive.namelist()[0]
+                with archive.open(filename) as source:
+                    frames.append(pd.read_csv(source, low_memory=False))
+
+        df = pd.concat(frames, ignore_index=True)
+        market_names = df['Market and Exchange Names'].astype(str)
+        gold = df[market_names.str.startswith('GOLD - COMMODITY EXCHANGE', na=False)].copy()
+        if gold.empty:
+            return {}
+
+        long_col = 'Noncommercial Positions-Long (All)'
+        short_col = 'Noncommercial Positions-Short (All)'
+        date_col = 'As of Date in Form YYYY-MM-DD'
+        gold['net_long'] = (pd.to_numeric(gold[long_col], errors='coerce')
+                            - pd.to_numeric(gold[short_col], errors='coerce'))
+        gold[date_col] = pd.to_datetime(gold[date_col], errors='coerce')
+        gold = gold.dropna(subset=['net_long', date_col]).sort_values(date_col)
+        if gold.empty:
+            return {}
+
+        latest = gold.iloc[-1]
+        latest_net = float(latest['net_long'])
+        result = {
+            'date': latest[date_col].strftime('%Y-%m-%d'),
+            'net_long': latest_net,
+            'percentile': float((gold['net_long'] <= latest_net).mean() * 100.0),
+            'sample_count': int(len(gold)),
+        }
+        with open(cache_path, 'w', encoding='utf-8') as fp:
+            json.dump(result, fp, ensure_ascii=False, indent=2)
+        return result
+    except Exception as e:
+        print(f'  [CFTC] Gold position download failed: {e}. Fallback to cache if available.')
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, encoding='utf-8') as fp:
+                    return json.load(fp)
+            except Exception:
+                pass
+    return {}
+
+
+def _get_gld_flow_4w(quote_ctx):
+    """Return GLD's 20-session aggregate net capital flow as a gold ETF flow proxy."""
+    try:
+        ret, data = quote_ctx.get_capital_flow('US.GLD', period_type=PeriodType.DAY)
+        time.sleep(0.1)
+        if ret != RET_OK or data.empty or 'in_flow' not in data.columns:
+            return {}
+        values = pd.to_numeric(data['in_flow'], errors='coerce').dropna().tail(20)
+        if values.empty:
+            return {}
+        date_str = ''
+        date_col = 'capital_flow_item_time'
+        if date_col in data.columns:
+            dates = pd.to_datetime(data.loc[values.index, date_col], errors='coerce').dropna()
+            if not dates.empty:
+                date_str = dates.iloc[-1].strftime('%Y-%m-%d')
+        return {
+            'date': date_str,
+            'net_flow': float(values.sum()),
+            'sessions': int(len(values)),
+        }
+    except Exception as e:
+        print(f'  [GLD] 4-week flow unavailable: {e}')
+        return {}
 
 
 def _get_naaim_index_with_cache(cache_dir='config/macro_cache'):
@@ -839,6 +933,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
             passers_strict.append((c, d, f, tov, avg_price_dev, mtr))
 
     forecast_eps_ratio_map = {}
+    gld_flow_4w = {}
     if market == 'us':
         valuation_targets = sorted({
             c for c, _, _, _, _, _ in passers
@@ -860,6 +955,7 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
                     forecast_eps_ratio_map[code] = float(current_pe) / float(forward_pe)
             except Exception:
                 continue
+        gld_flow_4w = _get_gld_flow_4w(q)
 
     try:
         q.close()
@@ -1011,6 +1107,51 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
     except Exception as e:
         fms_str = f"Error ({e})"
 
+    real_yield_str = 'N/A'
+    cftc_gold_str = 'N/A'
+    gld_flow_str = 'N/A'
+    if market == 'us':
+        try:
+            real_yield_data = _get_fred_data_with_cache('DFII10')
+            observations = sorted(real_yield_data.items())
+            if observations:
+                latest_date, latest_value = observations[-1]
+                if len(observations) >= 6:
+                    change_5d = latest_value - observations[-6][1]
+                    direction = '追い風' if change_5d < 0 else '逆風' if change_5d > 0 else '中立'
+                    real_yield_str = (f'{latest_value:.2f}% '
+                                      f'(5D {change_5d:+.2f}pt, {direction}, {latest_date})')
+                else:
+                    real_yield_str = f'{latest_value:.2f}% ({latest_date})'
+        except Exception as e:
+            real_yield_str = f'Error ({e})'
+
+        if gld_flow_4w:
+            net_flow = gld_flow_4w['net_flow']
+            if abs(net_flow) >= 1_000_000_000:
+                flow_value = f'{net_flow / 1_000_000_000:+.2f}B USD'
+            else:
+                flow_value = f'{net_flow / 1_000_000:+.1f}M USD'
+            flow_label = '流入' if net_flow > 0 else '流出' if net_flow < 0 else '中立'
+            gld_flow_str = (f'{flow_value} ({gld_flow_4w["sessions"]}営業日, '
+                            f'{flow_label}, {gld_flow_4w.get("date") or "日付不明"})')
+
+        try:
+            cftc_gold = _get_cftc_gold_position_with_cache()
+            if cftc_gold:
+                percentile = cftc_gold['percentile']
+                if percentile >= 90.0:
+                    position_label = '買い混雑'
+                elif percentile <= 10.0:
+                    position_label = '買い余地大'
+                else:
+                    position_label = '中立'
+                cftc_gold_str = (f'{cftc_gold["net_long"]:+,.0f} contracts '
+                                 f'(3Y {percentile:.1f}pct, {position_label}, '
+                                 f'{cftc_gold["date"]})')
+        except Exception as e:
+            cftc_gold_str = f'Error ({e})'
+
     if market == 'us':
         # --- Sector VWAP Breadth ---
         sector_etfs = ['US.XLK', 'US.XLF', 'US.XLV', 'US.XLE', 'US.XLY', 'US.XLP', 'US.XLB', 'US.XLU', 'US.XLRE', 'US.XLC', 'US.IYT']
@@ -1034,6 +1175,9 @@ def main(market, top_n=5, num_workers=4, show_standard_reference=True,
         print(f"    FMS Cash Level     : {fms_str}")
         print("                        (目安: 5.0%以上で底値圏・買いシグナル、4.0%以下で過熱・売りシグナル)")
         print(f"    Sector VWAP Breadth: {sector_breadth:.1f}% ({sector_category})")
+        print(f"    US 10Y Real Yield  : {real_yield_str}")
+        print(f"    GLD Flow 4W (proxy): {gld_flow_str}")
+        print(f"    CFTC Gold Net Long : {cftc_gold_str}")
         print(f"{'='*78}")
     else:
         non_etfs = [c for c in all_codes if not is_etf(c)]
